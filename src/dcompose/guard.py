@@ -10,6 +10,7 @@ from dcompose import ids, policy
 from dcompose.text import printable
 
 COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+COMPOSE_VARS_IN_ENV_FILE = re.compile(r"^\s*(export\s+)?COMPOSE_(FILE|PATH_SEPARATOR)\s*=", re.MULTILINE)
 
 
 class GuardError(Exception):
@@ -22,20 +23,19 @@ def inspect(global_args):
     return load_config(global_args), project_dir
 
 
-def check(global_args, build_only=False):
-    """Return the list of policy problems; failure to inspect counts as a problem."""
+def check(global_args, rules=policy.check_config):
+    """Return the problems rules(config, ctx) finds; failure to inspect counts as a problem."""
     try:
         config, project_dir = inspect(global_args)
-        return evaluate(config, project_dir, build_only)
+        return rules(config, context(project_dir))
     except GuardError as e:
         return [str(e)]
 
 
-def evaluate(config, project_dir, build_only=False):
-    if build_only:
-        return policy.check_build_config(config, project_dir)
+def context(project_dir):
+    """The policy context for project_dir, from dcompose's own environment."""
     uid, gid = ids.allowed(os.environ)
-    return policy.check_config(config, project_dir, uid, gid, extra_mount_dirs(os.environ))
+    return policy.Context(project_dir, uid, gid, tuple(extra_mount_dirs(os.environ)))
 
 
 def extra_mount_dirs(env):
@@ -51,9 +51,9 @@ def extra_mount_dirs(env):
     return dirs
 
 
-def passes(global_args, build_only=False):
+def passes(global_args, rules=policy.check_config):
     """check(), reporting problems on stderr."""
-    return report(check(global_args, build_only))
+    return report(check(global_args, rules))
 
 
 def report(problems):
@@ -71,7 +71,7 @@ def load_config(global_args):
     cmd = ["docker", "compose", *global_args, "--profile", "*", "config", "--format", "json",
            "--no-env-resolution"]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except FileNotFoundError:
         raise GuardError("'docker' not found in PATH")
     if result.returncode != 0:
@@ -112,9 +112,6 @@ def find_compose_dir(start, env_files=()):
         if parent == directory:
             raise GuardError("no compose file found")
         directory = parent
-
-
-COMPOSE_VARS_IN_ENV_FILE = re.compile(r"^\s*(export\s+)?COMPOSE_(FILE|PATH_SEPARATOR)\s*=", re.MULTILINE)
 
 
 def refuse_compose_vars_in(path):

@@ -18,7 +18,7 @@ class LookupFailed(Exception):
 
 
 def describe(config, remote, run=subprocess.run):
-    """One line per service without `user` that has an image, plus a hint if remote lookups would add information."""
+    """One line per service without `user` that has an image, plus a hint if remote lookups would add more."""
     lines = []
     missing_locally = False
     for name, service in sorted(config.get("services", {}).items()):
@@ -78,7 +78,8 @@ def remote_user(image, run):
     except FileNotFoundError:
         raise LookupFailed("'docker' not found in PATH")
     if result.returncode != 0:
-        raise LookupFailed(result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "unknown error")
+        stderr = result.stderr.strip()
+        raise LookupFailed(stderr.splitlines()[-1] if stderr else "unknown error")
     try:
         return user_from_image_json(json.loads(result.stdout))
     except (ValueError, AttributeError) as e:

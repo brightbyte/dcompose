@@ -1,9 +1,5 @@
 """Escaping for text that comes from an untrusted compose project."""
 
-import re
-
-SAFE_YAML_KEY = re.compile(r"^[A-Za-z0-9_.-]+$")
-
 
 def printable(text):
     """One line of text with control, format and line-separator characters escaped.

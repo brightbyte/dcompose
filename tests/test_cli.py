@@ -1,14 +1,7 @@
 import pytest
 
-from dcompose import cli
+from dcompose import cli, guard, policy
 from dcompose.commands import COMMANDS
-
-
-@pytest.fixture
-def forwarded(monkeypatch):
-    calls = []
-    monkeypatch.setattr(cli, "forward", calls.append)
-    return calls
 
 
 @pytest.mark.parametrize("argv, expected", [
@@ -67,3 +60,57 @@ def test_dcompose_help_precedes_forwarding(forwarded, capsys, argv, expect_help)
     assert ("dcompose commands:" in out) == expect_help
     if expect_help:
         assert "audit" in out and "fix" in out
+
+
+@pytest.mark.parametrize("subcommand", sorted(cli.GUARDED_SUBCOMMANDS))
+def test_guarded_subcommand_with_problems_is_not_forwarded(forwarded, monkeypatch, subcommand):
+    monkeypatch.setattr(guard, "check", lambda global_args, rules: ["privileged is not allowed"])
+    assert cli.main(["-f", "a.yml", subcommand]) == 1
+    assert forwarded == []
+
+
+def test_guarded_subcommand_without_problems_is_forwarded(forwarded, monkeypatch):
+    seen = []
+    monkeypatch.setattr(guard, "check", lambda global_args, rules: seen.append((global_args, rules)) or [])
+    cli.main(["-f", "a.yml", "up", "-d"])
+    assert seen == [(["-f", "a.yml"], policy.check_config)]
+    assert forwarded == [["-f", "a.yml", "up", "-d"]]
+
+
+def test_unguarded_subcommand_is_not_inspected(forwarded, monkeypatch):
+    monkeypatch.setattr(guard, "check", lambda global_args, rules: 1 / 0)
+    cli.main(["ps"])
+    assert forwarded == [["ps"]]
+
+
+@pytest.mark.parametrize("argv, guarded", [
+    (["up"], True),
+    (["run", "app", "ls", "-h"], True),
+    (["run", "app", "grep", "-h", "foo"], True),
+    (["run", "app", "--help"], True),
+    (["run", "-e", "--help", "app"], True),  # a flag value, not a help request
+    (["up", "-d", "--help"], True),
+    (["up", "-h"], True),
+    (["up", "--help"], False),
+    (["run", "--help"], False),
+    (["watch", "--help"], False),
+    (["ps"], False),
+    (["logs", "-f"], False),
+    ([], False),
+])
+def test_is_guarded(argv, guarded):
+    assert cli.is_guarded(argv, cli.find_subcommand(argv)) == guarded
+
+
+@pytest.mark.parametrize("subcommand, rules", [
+    ("up", policy.check_config),
+    ("run", policy.check_config),
+    ("build", policy.check_build_config),
+    ("bake", policy.check_build_config),
+])
+def test_build_subcommands_get_the_build_rules(forwarded, monkeypatch, subcommand, rules):
+    seen = []
+    monkeypatch.setattr(guard, "check", lambda global_args, rules: seen.append(rules) or [])
+    cli.main([subcommand])
+    assert seen == [rules]
+    assert forwarded == [[subcommand]]

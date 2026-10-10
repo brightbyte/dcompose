@@ -8,7 +8,7 @@ parse is the position of the subcommand.
 import os
 import sys
 
-from dcompose import guard, ids
+from dcompose import guard, ids, policy
 from dcompose.commands import COMMANDS
 
 # Subcommands that create containers from the config. `alpha` is a group (older
@@ -69,8 +69,10 @@ def main(argv=None):
     if idx is not None and argv[idx] in COMMANDS:
         return COMMANDS[argv[idx]](global_args=argv[:idx], args=argv[idx + 1:])
 
-    if is_guarded(argv, idx) and not guard.passes(argv[:idx], build_only=argv[idx] in BUILD_SUBCOMMANDS):
-        return 1
+    if is_guarded(argv, idx):
+        rules = policy.check_build_config if argv[idx] in BUILD_SUBCOMMANDS else policy.check_config
+        if not guard.passes(argv[:idx], rules):
+            return 1
 
     if wants_help(argv, idx):
         print_help()
@@ -79,7 +81,7 @@ def main(argv=None):
 
 
 def is_guarded(argv, idx):
-    """Whether the guard must run: container-creating subcommands, unless compose only prints help.
+    """Whether the guard must run: GUARDED_SUBCOMMANDS, unless compose only prints help.
 
     Only a leading --help counts. After `run <service>` the rest belongs to the
     command (`run app grep -h x`), and flag values can look like options, so
@@ -103,9 +105,11 @@ def print_help():
         "dcompose: docker compose with security checks and extra subcommands.",
         "Everything else is forwarded to docker compose unchanged.",
         "",
-        f"{', '.join(sorted(GUARDED_SUBCOMMANDS))} refuse to run if the config mounts paths outside",
+        f"{', '.join(sorted(RUNTIME_SUBCOMMANDS))} refuse to run if the config mounts paths outside",
         "the project directory, runs as any user but the allowed one (you, or DCOMPOSE_UID/GID) or nobody,",
-        "or asks for extra privileges. See `dcompose audit`.",
+        "or asks for extra privileges.",
+        f"{', '.join(sorted(BUILD_SUBCOMMANDS))} refuse builds that read outside the project, use the",
+        "host network, run privileged or forward your SSH agent. See `dcompose audit`.",
         "",
         "dcompose commands:",
     ]

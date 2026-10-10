@@ -1,6 +1,6 @@
 import os
 
-from dcompose import commands, guard, patch, policy
+from dcompose import autofix, commands, guard, patch, policy
 
 UID = os.getuid()
 GID = os.getgid()
@@ -16,21 +16,21 @@ def compliant(**service):
 
 def test_patch_resets_removed_keys_and_overrides_changed_ones():
     original = config(user="0:0", privileged=True, group_add=["0", str(GID)], image="x")
-    fixed = policy.fix_config(original, UID, GID, '/proj')
+    fixed = autofix.fix_config(original, policy.Context('/proj', UID, GID))
 
     lines = patch.render(original, fixed).splitlines()
 
     assert '    user: "${DCOMPOSE_UID}:${DCOMPOSE_GID}"' in lines
     assert any("DCOMPOSE_UID" in line and line.startswith("# note") for line in lines)
     assert "    privileged: !reset null" in lines
-    assert '    group_add: !override ["%d"]' % GID in lines
+    assert f'    group_add: !override ["{GID}"]' in lines
     # untouched keys are not repeated
     assert not any("image" in line for line in lines)
 
 
 def test_patch_for_compliant_config_is_empty():
     original = compliant()
-    fixed = policy.fix_config(original, UID, GID, '/proj')
+    fixed = autofix.fix_config(original, policy.Context('/proj', UID, GID))
     assert patch.render(original, fixed).splitlines()[-1] == "services: {}"
 
 
@@ -52,7 +52,7 @@ def test_fix_command_prints_patch_and_fails_when_problems_remain(monkeypatch, ca
 
 def test_patch_replaces_mount_list_and_tells_user_to_edit_placeholders(tmp_path):
     original = compliant(volumes=[{"type": "bind", "source": "/etc", "target": "/e"}])
-    fixed = policy.fix_config(original, UID, GID, str(tmp_path))
+    fixed = autofix.fix_config(original, policy.Context(str(tmp_path), UID, GID))
 
     text = patch.render(original, fixed)
 

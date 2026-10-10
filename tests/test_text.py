@@ -1,6 +1,6 @@
 import os
 
-from dcompose import commands, guard, patch, policy
+from dcompose import autofix, commands, guard, patch, policy
 from dcompose.text import printable
 
 UID, GID = os.getuid(), os.getgid()
@@ -13,10 +13,11 @@ def test_printable_escapes_control_line_separator_and_bidi_characters():
 
 def test_newline_in_untrusted_text_cannot_leave_the_patch_comment():
     evil = "/etc\nservices:\n  pwned: {}"
-    original = {"name": "p", "services": {"web": {"user": f"{UID}:{GID}", "security_opt": ["no-new-privileges:true"],
-                                                  "cap_drop": ["ALL"],
-                                                  "volumes": [{"type": "bind", "source": evil, "target": "/e"}]}}}
-    fixed = policy.fix_config(original, UID, GID, "/proj")
+    original = {"name": "p", "services": {"web": {
+        "user": f"{UID}:{GID}", "security_opt": ["no-new-privileges:true"], "cap_drop": ["ALL"],
+        "volumes": [{"type": "bind", "source": evil, "target": "/e"}],
+    }}}
+    fixed = autofix.fix_config(original, policy.Context("/proj", UID, GID))
 
     text = patch.render(original, fixed, ["bind mount " + evil])
 
