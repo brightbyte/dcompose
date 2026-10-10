@@ -1,0 +1,4 @@
+.sidecar
+__pycache__/
+*.egg-info/
+.pytest_cache/
