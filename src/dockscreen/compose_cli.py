@@ -1,4 +1,4 @@
-"""Entry point: dispatch custom subcommands, forward everything else to docker compose.
+"""`docker compose` through dockscreen: dispatch custom subcommands, forward everything else.
 
 We deliberately do not use argparse for the docker compose surface. Anything we
 do not recognise must reach docker compose untouched, so the only thing we
@@ -140,7 +140,7 @@ def wants_help(argv, idx):
 
 def print_help():
     lines = [
-        "dockscreen: docker compose with security checks and extra subcommands.",
+        "dockscreen compose: docker compose with security checks and extra subcommands.",
         "Everything else is forwarded to docker compose unchanged.",
         "",
         f"{', '.join(sorted(RUNTIME_SUBCOMMANDS))} refuse to run if the config mounts paths outside",
@@ -149,10 +149,10 @@ def print_help():
         "cap_drop ALL and no-new-privileges added to every service that lacks them.",
         f"{flags.ALLOW_ME}, before the subcommand, allows services to run as you.",
         f"{', '.join(sorted(BUILD_SUBCOMMANDS))} refuse builds that read outside the project, use the",
-        "host network, run privileged or forward your SSH agent. See `dockscreen audit`.",
+        "host network, run privileged or forward your SSH agent. See `dockscreen compose audit`.",
         f"{flags.SKIP_SCREENING}, before the subcommand, turns all of this off.",
         "",
-        "dockscreen commands:",
+        "dockscreen compose commands:",
     ]
     for name, fn in sorted(COMMANDS.items()):
         if name in ALIASES:

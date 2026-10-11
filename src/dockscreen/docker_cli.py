@@ -1,6 +1,6 @@
-"""Entry point for a wrapper installed as `docker`.
+"""Entry point: `dockscreen`, a wrapper for `docker`, which can also be installed as `docker`.
 
-`docker compose` goes to dockscreen, commands that start containers from images
+`compose` goes to compose_cli, commands that start containers from images
 go through the gate, everything else is exec'd to the real docker unchanged.
 """
 
@@ -51,6 +51,8 @@ def dispatch(argv):
 
     idx = argscan.find_subcommand(argv, DOCKER_OPTS_WITH_VALUE)
     if idx is None:
+        if not argv or "--help" in argv or "-h" in argv:
+            print_help()
         return passthrough(argv, runtime)
 
     if argv[idx] == "compose":
@@ -97,6 +99,25 @@ def gated(argv, sub, idx, end, runtime, allow_me=False):
         return gate.audit(ctx, args)
     problems = gate.check_existing(ctx, args)
     return messages.refuse(problems) if problems else passthrough(argv, runtime)
+
+
+def print_help():
+    lines = [
+        "dockscreen: docker with security checks. Everything else is forwarded to docker unchanged.",
+        "",
+        "compose runs docker compose on projects that pass the checks; see `dockscreen compose --help`.",
+        "run checks the user an image runs as: root becomes the default user (nobody unless configured),",
+        "and an account of this host, or with mounts an id outside the nobody range, is refused. start and",
+        "restart refuse containers that would fail that check. create and run add --cap-drop=ALL and",
+        "no-new-privileges. audit IMAGE says what run would do.",
+        f"{flags.ALLOW_ME}, before the subcommand, allows containers to run as you.",
+        f"{flags.SKIP_SCREENING}, before the subcommand, turns all of this off.",
+        "",
+        "docker help follows.",
+        "",
+    ]
+    # flush: exec in passthrough() discards unflushed buffers
+    print("\n".join(lines), flush=True)
 
 
 def passthrough(argv, runtime):

@@ -13,7 +13,7 @@ dependencies = []
 dev = ["pytest"]
 
 [project.scripts]
-dockscreen = "dockscreen.compose_cli:main"
+dockscreen = "dockscreen.docker_cli:main"
 ddocker = "dockscreen.docker_cli:main"
 
 [tool.setuptools.packages.find]

@@ -4,7 +4,7 @@ Audience: people who change dockscreen or review its security. Users want the RE
 
 ## Purpose
 
-`docker compose up` on a project you just cloned gives that project whatever access the docker daemon has: in effect root on the host. The same goes for `docker run` on an image you just pulled. dockscreen sits in front of `docker compose`, and optionally in front of `docker`. It refuses a project or image that would reach outside its own directory or run with privileges, and adds hardening defaults to what it lets through. Everything it does not need to look at is passed to the real docker unchanged.
+`docker compose up` on a project you just cloned gives that project whatever access the docker daemon has: in effect root on the host. The same goes for `docker run` on an image you just pulled. dockscreen is a wrapper for `docker`, and can be installed as `docker`. It refuses a project or image that would reach outside its own directory or run with privileges, and adds hardening defaults to what it lets through. Everything it does not need to look at is passed to the real docker unchanged.
 
 ## Threat model
 
@@ -195,7 +195,7 @@ Every structure has its own key list: service, mount, build, volume, network, se
 - Every `create` gets `--cap-drop=ALL --security-opt=no-new-privileges:true` placed before the user's arguments, so the command line can override them.
 - Users chosen on the command line: see [Command-line options](#command-line-options).
 - A daemon that is not the local default is refused (`-H`, `--context`, a non-unix `DOCKER_HOST`, a non-default context): host ids and paths mean nothing there.
-- `docker compose` goes to dockscreen. Everything else is exec'd to the real docker unchanged. The real docker is the configured `docker`, or else the next `docker` on `PATH` that is not the wrapper. Empty `PATH` entries are skipped, so the current directory cannot supply it.
+- `compose` goes to `compose_cli` (see [Compose](#compose-compose_cli-screen-hardening-policy-composeimages-composerun)). Everything else is exec'd to the real docker unchanged. The real docker is the configured `docker`, or else the next `docker` on `PATH` that is not the wrapper. Empty `PATH` entries are skipped, so the current directory cannot supply it.
 
 ### Configuration and options (`config`)
 

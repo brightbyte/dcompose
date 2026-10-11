@@ -59,7 +59,7 @@ def test_dockscreen_help_precedes_forwarding(forwarded, capsys, argv, expect_hel
     compose_cli.main(argv)
     assert forwarded == [argv]
     out = capsys.readouterr().out
-    assert ("dockscreen commands:" in out) == expect_help
+    assert ("dockscreen compose commands:" in out) == expect_help
     if expect_help:
         assert "audit" in out and "fix" in out
 

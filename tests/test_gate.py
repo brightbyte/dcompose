@@ -320,6 +320,22 @@ def test_compose_is_routed_to_dockscreen(routed):
     assert routed == [("compose", ["-f", "a.yml", "up"])]
 
 
+@pytest.mark.parametrize("argv, expect_help", [
+    ([], True),
+    (["--help"], True),
+    (["-h"], True),
+    (["ps"], False),
+    (["run", "--help"], False),  # docker's own help for the subcommand
+])
+def test_dockscreen_help_precedes_dockers(routed, capsys, argv, expect_help):
+    docker_cli.main(argv)
+    assert routed == [("exec", argv)]
+    out = capsys.readouterr().out
+    assert ("dockscreen: docker with security checks" in out) == expect_help
+    if expect_help:
+        assert "dockscreen compose --help" in out
+
+
 def test_docker_options_before_compose_are_refused(routed, capsys):
     assert docker_cli.main(["--context", "x", "compose", "up"]) == 1
     assert routed == []
