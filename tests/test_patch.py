@@ -43,7 +43,7 @@ def test_fix_command_prints_patch_and_fails_when_problems_remain(monkeypatch, ca
     original = config(user="0:0", build={"context": "/"})
     monkeypatch.setattr(guard, "inspect", lambda global_args: (original, str(tmp_path)))
 
-    assert commands.fix([], []) == 1
+    assert commands.harden([], []) == 1
 
     captured = capsys.readouterr()
     assert "services:" in captured.out and "user:" in captured.out

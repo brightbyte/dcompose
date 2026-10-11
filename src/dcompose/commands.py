@@ -10,65 +10,113 @@ A name registered here shadows the docker compose subcommand of the same name.
 import subprocess
 import sys
 
-from dcompose import autofix, guard, imageinfo, patch, policy
+from dcompose import autofix, composeimages, composerun, guard, hardening, patch, policy, realdocker
 from dcompose.text import printable
 
 COMMANDS = {}
+ALIASES = {}  # alias -> command it stands for
 
 
-def command(name):
+def command(name, *aliases):
     def register(fn):
         COMMANDS[name] = fn
+        for alias in aliases:
+            COMMANDS[alias] = fn
+            ALIASES[alias] = name
         return fn
     return register
+
+
+HARDEN_HINT = "hint: the harden subcommand prints a compose override file with these fixes."
 
 
 @command("doctor")
 def doctor(global_args, args):
     """Show the docker compose version that other commands are forwarded to."""
-    return subprocess.call(["docker", "compose", *global_args, "version", *args])
+    return subprocess.call([realdocker.docker_bin(), "compose", *global_args, "version", *args])
 
 
 @command("audit")
 def audit(global_args, args):
-    """Run the checks that guard `up` without starting anything; --remote asks registries for image users."""
-    if set(args) - {"--remote"}:
-        print("usage: dcompose [compose options] audit [--remote]", file=sys.stderr)
+    """Run the checks that guard `up` without starting anything; pulls and builds images as up would."""
+    if args:
+        print("usage: dcompose [compose options] audit", file=sys.stderr)
         return 2
 
+    lines = []
     try:
         config, project_dir = guard.inspect(global_args)
-        problems = policy.check_config(config, guard.context(project_dir))
-    except guard.GuardError as e:
-        config, problems = None, [str(e)]
+        hardened, additions = hardening.apply(config)
+        problems = policy.check_config(hardened, composerun.vetting_all(guard.context(project_dir), hardened))
+        tools = composerun.default_tools()
+    except (guard.GuardError, ValueError) as e:
+        config, additions, problems = None, [], [str(e)]
+
+    lines += hardening.describe(additions)
+    if config is not None and problems:
+        lines.append("the images were not looked at because of the problems above: "
+                     "nothing was pulled or built")
+    elif config is not None:
+        with composerun.generated(global_args, project_dir) as command:
+            prepared = composeimages.prepare(command(hardened), hardened, [], tools)
+        problems = prepared.problems
+        lines += composeimages.describe(hardened, prepared)
 
     passed = guard.report(problems)
     if passed:
         print("dcompose: audit passed", file=sys.stderr)
     if config is not None:
-        for line in imageinfo.describe(config, remote="--remote" in args):
+        for line in lines:
             print(printable(line))
+        if problems or additions:
+            print(HARDEN_HINT)
     return 0 if passed else 1
 
 
-@command("fix")
-def fix(global_args, args):
+@command("harden", "fix")
+def harden(global_args, args):
     """Print a compose override that fixes what can be fixed; exit 1 if problems remain.
 
-    The patch is relative to the merged config the guard inspects. Mount sources
-    outside the project become placeholders to edit; problems without a safe
-    automatic fix are listed in the patch as comments.
+    The patch is relative to the merged config as dcompose will run it, defaults
+    included: only what is needed on top of them to pass the audit is written out,
+    and one comment says what is added automatically. Mount sources outside the
+    project become placeholders to edit; problems without a safe automatic fix are
+    listed as comments. Images are pulled and built first, as `up` would, to see
+    which services need a user of their own.
     """
     try:
         config, project_dir = guard.inspect(global_args)
-        ctx = guard.context(project_dir)
-    except guard.GuardError as e:
+        base, _ = hardening.apply(config)
+        static = composerun.vetting_all(guard.context(project_dir), base)
+        tools = composerun.default_tools()
+    except (guard.GuardError, ValueError) as e:
         print(f"dcompose: {printable(e)}", file=sys.stderr)
         return 1
 
-    fixed = autofix.fix_config(config, ctx)
-    remaining = policy.check_config(autofix.resolve_user_template(fixed, ctx), ctx)
-    sys.stdout.write(patch.render(config, fixed, remaining))
+    fixed = autofix.fix_config(base, static)
+    remaining = policy.check_config(autofix.resolve_user_template(fixed, static), static)
+    notes = [hardening.defaults_note()]
+    if remaining:
+        print("dcompose: the images were not looked at because of the problems below: "
+              "nothing was pulled or built", file=sys.stderr)
+    else:
+        remaining, notes = fix_image_users(global_args, project_dir, fixed, notes, tools)
+
+    sys.stdout.write(patch.render(base, fixed, remaining, notes=notes))
     for problem in remaining:
         print(f"dcompose: cannot fix automatically: {printable(problem)}", file=sys.stderr)
     return 1 if remaining else 0
+
+
+def fix_image_users(global_args, project_dir, fixed, notes, tools):
+    """Set a user on the services whose image chose one that is not acceptable. (problems left, notes)."""
+    with composerun.generated(global_args, project_dir) as command:
+        prepared = composeimages.prepare(command(fixed), fixed, [], tools)
+    if not prepared.decisions:
+        return prepared.problems, notes  # nothing could be looked at: pulling or building failed
+    for name, decision in prepared.decisions.items():
+        if decision.assessment.kind == "refused":
+            fixed["services"][name]["user"] = autofix.USER_TEMPLATE
+            notes.append(f"service {name}: image {decision.image} chose a user that is not acceptable, "
+                         "so user is set explicitly")
+    return [], notes

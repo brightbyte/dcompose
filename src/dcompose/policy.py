@@ -88,6 +88,9 @@ class Context(NamedTuple):
     uid: int
     gid: int
     extra_dirs: tuple = ()  # DCOMPOSE_DIRS
+    # Services whose unset `user` is acceptable because their image was looked at and would
+    # run as an acceptable user (see composeimages). Only dcompose sets this, never the project.
+    vetted: frozenset = frozenset()
 
     @property
     def mount_roots(self):
@@ -98,7 +101,7 @@ def check_config(config, ctx):
     project = config.get("name")
     problems = unknown_keys(config, TOP_LEVEL_KEYS, "top-level key")
     for name, service in (config.get("services") or {}).items():
-        problems += [f"service {name}: {p}" for p in check_service(service or {}, ctx)]
+        problems += [f"service {name}: {p}" for p in check_service(service or {}, ctx, name in ctx.vetted)]
     for key, volume in (config.get("volumes") or {}).items():
         problems += [f"volume {key}: {p}" for p in check_volume(key, volume, project, ctx)]
     for key, network in (config.get("networks") or {}).items():
@@ -127,9 +130,11 @@ def unknown_keys(mapping, allowed, what, extensions=True):
     ]
 
 
-def check_service(service, ctx):
+def check_service(service, ctx, vetted=False):
     problems = unknown_keys(service, HARMLESS_SERVICE_KEYS | SERVICE_CHECKS.keys(), "key")
     for key, check in SERVICE_CHECKS.items():
+        if key == "user" and vetted and not service.get("user"):
+            continue
         if key in REQUIRED_SERVICE_KEYS or key in service:
             problems += check(service.get(key), ctx)
     return problems

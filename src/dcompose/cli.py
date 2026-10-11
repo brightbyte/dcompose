@@ -8,8 +8,8 @@ parse is the position of the subcommand.
 import os
 import sys
 
-from dcompose import guard, ids, policy
-from dcompose.commands import COMMANDS
+from dcompose import composerun, guard, ids, policy, realdocker, skipflag
+from dcompose.commands import ALIASES, COMMANDS
 
 # Subcommands that create containers from the config. `alpha` is a group (older
 # compose has `alpha watch`); guarding it is cheap and errs on the safe side.
@@ -32,14 +32,14 @@ GLOBAL_OPTS_WITH_VALUE = frozenset({
 })
 
 
-def find_subcommand(argv):
-    """Return the index of the compose subcommand in argv, or None."""
+def find_subcommand(argv, value_opts=GLOBAL_OPTS_WITH_VALUE):
+    """Return the index of the subcommand in argv, or None. value_opts: options that take a value."""
     i = 0
     while i < len(argv):
         token = argv[i]
         if token == "--":
             return None
-        if token in GLOBAL_OPTS_WITH_VALUE:
+        if token in value_opts:
             i += 2
         elif token.startswith("-"):
             i += 1
@@ -51,13 +51,19 @@ def find_subcommand(argv):
 def forward(argv):
     """Replace this process with `docker compose argv`, keeping tty, signals and exit code."""
     try:
-        os.execvp("docker", ["docker", "compose", *argv])
+        binary = realdocker.docker_bin()
+        os.execvp(binary, [binary, "compose", *argv])
     except FileNotFoundError:
         sys.exit("dcompose: 'docker' not found in PATH")
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
+
+    skipped, argv = skipflag.strip(argv, GLOBAL_OPTS_WITH_VALUE)
+    if skipped:
+        skipflag.banner()
+        return forward(argv)
 
     try:
         ids.export(os.environ)
@@ -70,8 +76,9 @@ def main(argv=None):
         return COMMANDS[argv[idx]](global_args=argv[:idx], args=argv[idx + 1:])
 
     if is_guarded(argv, idx):
-        rules = policy.check_build_config if argv[idx] in BUILD_SUBCOMMANDS else policy.check_config
-        if not guard.passes(argv[:idx], rules):
+        if argv[idx] not in BUILD_SUBCOMMANDS:
+            return composerun.run(argv, idx)
+        if not guard.passes(argv[:idx], policy.check_build_config):
             return 1
 
     if wants_help(argv, idx):
@@ -107,15 +114,20 @@ def print_help():
         "",
         f"{', '.join(sorted(RUNTIME_SUBCOMMANDS))} refuse to run if the config mounts paths outside",
         "the project directory, runs as any user but the allowed one (you, or DCOMPOSE_UID/GID) or nobody,",
-        "or asks for extra privileges.",
+        "or asks for extra privileges. They run the project from the checked config, with cap_drop ALL and",
+        "no-new-privileges added to every service that lacks them.",
         f"{', '.join(sorted(BUILD_SUBCOMMANDS))} refuse builds that read outside the project, use the",
         "host network, run privileged or forward your SSH agent. See `dcompose audit`.",
+        f"{skipflag.FLAG}, before the subcommand, turns all of this off.",
         "",
         "dcompose commands:",
     ]
     for name, fn in sorted(COMMANDS.items()):
+        if name in ALIASES:
+            continue
         summary = (fn.__doc__ or "").strip().splitlines()[0] if fn.__doc__ else ""
-        lines.append(f"  {name:<10}{summary}")
+        also = [alias for alias, primary in ALIASES.items() if primary == name]
+        lines.append(f"  {name:<10}{summary}" + (f" (also: {', '.join(also)})" if also else ""))
     lines += ["", "docker compose help follows.", ""]
     # flush: exec in forward() discards unflushed buffers
     print("\n".join(lines), flush=True)

@@ -29,8 +29,9 @@ def fix_config(config, ctx):
     """
     fixed = copy.deepcopy(config)
     allowed_gids = policy.allowed_ids(ctx.gid)
-    for service in fixed.get("services", {}).values():
-        if policy.check_user(service.get("user"), ctx):
+    for name, service in fixed.get("services", {}).items():
+        vetted = name in ctx.vetted and not service.get("user")
+        if not vetted and policy.check_user(service.get("user"), ctx):
             service["user"] = USER_TEMPLATE
         service["group_add"] = [g for g in service.get("group_add", []) if policy.parse_id(g) in allowed_gids]
         if not service["group_add"]:

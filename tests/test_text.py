@@ -40,7 +40,17 @@ def test_refusal_output_cannot_forge_lines_or_move_the_cursor(capsys):
 
 
 def test_audit_info_lines_are_escaped(monkeypatch, capsys, tmp_path):
-    cfg = {"name": "p", "services": {"web": {"image": "x\x1b[31m:1"}}}
+    from fakes import FakeImages, make_tools
+
+    from dcompose import composerun
+    image = "x\x1b[31m:1"
+    cfg = {"name": "p", "services": {"web": {"image": image}}}
     monkeypatch.setattr(guard, "inspect", lambda global_args: (cfg, str(tmp_path)))
+    tools, _ = make_tools(FakeImages(users={image: "app"}))
+    monkeypatch.setattr(composerun, "default_tools", lambda: tools)
+
     commands.audit([], [])
-    assert "\x1b" not in capsys.readouterr().out.replace("\\x1b", "")
+
+    out = capsys.readouterr().out
+    assert "service web: no user set; image x\\x1b[31m:1 runs as" in out
+    assert "\x1b" not in out.replace("\\x1b", "")

@@ -17,3 +17,21 @@ def forwarded(monkeypatch):
     calls = []
     monkeypatch.setattr(cli, "forward", calls.append)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def fixed_docker_binary(monkeypatch):
+    """Commands are asserted against plain "docker", wherever the real binary lives."""
+    from dcompose import realdocker
+    monkeypatch.setattr(realdocker, "docker_bin", lambda: "docker")
+
+
+@pytest.fixture(autouse=True)
+def fake_image_tools(monkeypatch):
+    """`audit` and `harden` pull and build; tests get a docker with no images unless they say otherwise."""
+    from fakes import FakeImages, make_tools
+
+    from dcompose import composerun
+    tools, recorder = make_tools(FakeImages())
+    monkeypatch.setattr(composerun, "default_tools", lambda: tools)
+    return recorder

@@ -38,3 +38,19 @@ def export(env):
     env["GID"] = str(os.getgid())
     env["DCOMPOSE_UID"] = str(allowed_uid)
     env["DCOMPOSE_GID"] = str(allowed_gid)
+
+
+# Ids an image may choose for itself: high enough to stay clear of host accounts and
+# subuid allocations, low enough to admit the distroless/Chainguard convention (65532).
+# Override with DCOMPOSE_ID_RANGE=low-high.
+DEFAULT_ID_RANGE = (65532, 2**31 - 1)
+
+
+def id_range(env):
+    value = env.get("DCOMPOSE_ID_RANGE")
+    if not value:
+        return DEFAULT_ID_RANGE
+    low, sep, high = value.partition("-")
+    if not (sep and low.isdigit() and high.isdigit() and int(low) <= int(high)):
+        raise ValueError(f"DCOMPOSE_ID_RANGE={value!r} is not of the form low-high")
+    return int(low), int(high)

@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""A `docker` for the front of your PATH; the real docker is found further down (see realdocker.py)."""
+
+import os
+import sys
+
+# realpath so that a symlink on PATH still finds the checkout
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "src"))
+
+from dcompose.docker_cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

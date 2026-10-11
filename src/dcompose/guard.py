@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-from dcompose import ids, policy
+from dcompose import ids, policy, realdocker
 from dcompose.text import printable
 
 COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
@@ -68,7 +68,7 @@ def load_config(global_args):
     # service, which a plain `config` would leave out of the inspected set.
     # --no-env-resolution keeps env_file paths in the output instead of inlining
     # their contents, so the policy can see which files are read.
-    cmd = ["docker", "compose", *global_args, "--profile", "*", "config", "--format", "json",
+    cmd = [realdocker.docker_bin(), "compose", *global_args, "--profile", "*", "config", "--format", "json",
            "--no-env-resolution"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -142,3 +142,20 @@ def option_values(args, long_name, short_name):
             values.append(token[2:])
         i += 1
     return values
+
+
+def strip_options(args, names):
+    """args without the given options, which take a value: `--opt v`, `--opt=v` and `-ov` forms."""
+    kept = []
+    i = 0
+    while i < len(args):
+        token = args[i]
+        if token in names:
+            i += 2
+        elif any(token.startswith(n + "=") for n in names if n.startswith("--")) \
+                or any(token.startswith(n) for n in names if not n.startswith("--")):
+            i += 1
+        else:
+            kept.append(token)
+            i += 1
+    return kept
