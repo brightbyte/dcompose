@@ -2,7 +2,7 @@ import os
 
 from fakes import rules
 
-from dockscreen import autofix, commands, patch, policy, screen
+from dockscreen import autofix, commands, messages, patch, policy, screen
 from dockscreen.text import printable
 
 UID, GID = os.getuid(), os.getgid()
@@ -35,7 +35,7 @@ def test_patch_quotes_unusual_keys():
 
 
 def test_refusal_output_cannot_forge_lines_or_move_the_cursor(capsys):
-    screen.report(["bind mount '/x\ndockscreen: audit passed\x1b[2K' is outside /p"])
+    messages.report(["bind mount '/x\n[dockscreen] audit passed\x1b[2K' is outside /p"])
     err = capsys.readouterr().err
     assert err.count("\n") == 1  # the one print() newline
     assert "\x1b" not in err.replace("\\x1b", "")

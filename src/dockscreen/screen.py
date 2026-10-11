@@ -4,10 +4,8 @@ import json
 import os
 import re
 import subprocess
-import sys
 
-from dockscreen import config, idrules, imageuser, policy, realdocker
-from dockscreen.text import printable
+from dockscreen import config, idrules, imageuser, messages, policy, realdocker
 
 COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 COMPOSE_VARS_IN_ENV_FILE = re.compile(r"^\s*(export\s+)?COMPOSE_(FILE|PATH_SEPARATOR)\s*=", re.MULTILINE)
@@ -73,14 +71,7 @@ def mount_dir_warnings(env):
 
 def passes(global_args, rules=policy.check_config):
     """check(), reporting problems on stderr."""
-    return report(check(global_args, rules))
-
-
-def report(problems):
-    """Print problems on stderr; True if there were none."""
-    for problem in problems:
-        print(f"dockscreen: refusing: {printable(problem)}", file=sys.stderr)
-    return not problems
+    return messages.report(check(global_args, rules))
 
 
 def load_config(global_args):

@@ -14,12 +14,11 @@ import functools
 import importlib.resources
 import os
 import stat
-import sys
 import tomllib
 from types import MappingProxyType
 from typing import NamedTuple
 
-from dockscreen import images
+from dockscreen import images, messages
 
 SYSTEM_FILE = "/etc/dockscreen/config.toml"
 KEYS = frozenset({"default_user", "nobody_range", "mount_dirs", "docker", "image_users"})
@@ -52,7 +51,7 @@ def current():
     """The configuration for this process, read once."""
     path = user_file(os.environ)
     if create_user_file(path):
-        print(f"dockscreen: created {path}, which shows the defaults", file=sys.stderr)
+        messages.notice(f"created {path}, which shows the defaults")
     return load([SYSTEM_FILE, path])
 
 

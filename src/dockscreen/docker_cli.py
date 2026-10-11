@@ -9,12 +9,12 @@ import sys
 
 from dockscreen import (
     cli,
-    composeargs,
     config,
     gate,
     hostusers,
     idrules,
     imageuser,
+    messages,
     realdocker,
     screen,
     skipflag,
@@ -34,8 +34,7 @@ def main(argv=None):
     try:
         return dispatch(argv)
     except config.ConfigError as e:
-        print(f"dockscreen: refusing: config file {e}", file=sys.stderr)
-        return 1
+        return messages.refuse([f"config file {e}"])
 
 
 def dispatch(argv):
@@ -53,7 +52,7 @@ def dispatch(argv):
 
     if argv[idx] == "compose":
         if idx != 0:
-            print("dockscreen: docker options before `compose` are not supported", file=sys.stderr)
+            messages.notice("docker options before `compose` are not supported")
             return 1
         return cli.main([*([cli.ALLOW_ME_FLAG] if allow_me else []), *argv[1:]])
 
@@ -69,9 +68,8 @@ def gated(argv, sub, idx, end, allow_me=False):
     lead, args = argv[:end + 1], argv[end + 1:]
     if sub == "audit":
         if not args or args[:1] == ["--help"]:
-            print("usage: docker audit [--user UID:GID | --as NAME | --as-me] IMAGE\n"
-                  "Predict what `docker run IMAGE` would do: run, run as nobody, or be refused.",
-                  file=sys.stderr)
+            messages.notice("usage: docker audit [--user UID:GID | --as NAME | --as-me] IMAGE")
+            messages.notice("Predict what `docker run IMAGE` would do: run, run as nobody, or be refused.")
             return 2
     elif args[:1] == ["--help"] or (sub in ("run", "create") and not args):
         return passthrough(argv)
@@ -79,20 +77,15 @@ def gated(argv, sub, idx, end, allow_me=False):
         try:
             resolved = gate.create_args(args)
         except hostusers.UserError as e:
-            return gate.refuse([str(e)])
+            return messages.refuse([str(e)])
         return passthrough([*lead, *gate.DEFAULTS, *resolved])
     if sub == "exec":
-        try:
-            parsed = composeargs.parse("docker exec", args)
-        except hostusers.UserError as e:
-            return gate.refuse([str(e)])
-        for notice in parsed.notices:
-            print(f"dockscreen: {notice}", file=sys.stderr)
-        return passthrough([*lead, *parsed.args])
+        resolved = cli.rewrite_exec("docker exec", args)
+        return 1 if resolved is None else passthrough([*lead, *resolved])
 
     docker = Docker()
     if screen.is_remote(argv[:idx], os.environ, docker):
-        return gate.refuse([screen.REMOTE_MESSAGE])
+        return messages.refuse([screen.REMOTE_MESSAGE])
 
     ctx = gate.Context(docker, idrules.rules(imageuser.LocalIds(), allow_me))
     if sub == "run":
@@ -100,7 +93,7 @@ def gated(argv, sub, idx, end, allow_me=False):
     if sub == "audit":
         return gate.audit(ctx, args)
     problems = gate.check_existing(ctx, args)
-    return gate.refuse(problems) if problems else passthrough(argv)
+    return messages.refuse(problems) if problems else passthrough(argv)
 
 
 def passthrough(argv):
@@ -109,7 +102,7 @@ def passthrough(argv):
     try:
         os.execvp(binary, [binary, *argv])
     except FileNotFoundError:
-        sys.exit("dockscreen: 'docker' not found in PATH")
+        messages.fatal(messages.DOCKER_NOT_FOUND)
 
 
 if __name__ == "__main__":

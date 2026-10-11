@@ -6,7 +6,7 @@ The warning is printed every time and cannot be silenced, because the flag may
 have been copied into a script or an alias.
 """
 
-import sys
+from dockscreen import messages
 
 FLAG = "--skip-screening"
 
@@ -38,6 +38,5 @@ def strip(argv, value_opts, flag=FLAG):
 
 
 def banner():
-    print(f"dockscreen: warning: {FLAG} given: screening is disabled.", file=sys.stderr)
-    print("dockscreen: warning: nothing in this command is checked, and no defaults are added.",
-          file=sys.stderr)
+    messages.warning(f"{FLAG} given: screening is disabled.")
+    messages.warning("nothing in this command is checked, and no defaults are added.")

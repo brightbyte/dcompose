@@ -586,7 +586,7 @@ def test_as_resolves_a_local_account_on_the_host_and_docker_gets_ids(capsys):
 
     assert docker.calls[0][1] == [*DEFAULTS, "--user=4242:4343", "img"]
     assert docker.names().count("create") == 1  # a user was given: no fallback
-    assert "dockscreen: Resolving user alice to uid 4242, gid 4343" in capsys.readouterr().err
+    assert "[dockscreen] Resolving user alice to uid 4242, gid 4343" in capsys.readouterr().err
 
 
 def test_as_with_an_account_the_host_does_not_have_is_refused_before_anything_is_created(capsys):

@@ -23,11 +23,10 @@ checked when it is started. `audit` predicts the outcome for an image.
 """
 
 import os
-import sys
 from typing import NamedTuple
 
 from dockscreen import config as configuration
-from dockscreen import hostusers, images, imageuser, runargs
+from dockscreen import hostusers, images, imageuser, messages, runargs
 from dockscreen.dockerclient import DockerError
 from dockscreen.text import printable
 
@@ -143,12 +142,12 @@ def run(ctx, args):
     try:
         parsed = runargs.parse(args, ctx.current_ids(), ctx.resolver())
     except runargs.ParseError as e:
-        return refuse([f"cannot read the command line: {e}; use the real docker for this one"])
+        return messages.refuse([f"cannot read the command line: {e}; use the real docker for this one"])
     except hostusers.UserError as e:
-        return refuse([str(e)])
+        return messages.refuse([str(e)])
     for message in [*parsed.notices, root_default_notice(ctx)]:
         if message:
-            notice(message)
+            messages.notice(message)
     ctx = allowing_me(ctx, parsed.allow_me)
 
     created = create_checked(ctx, parsed, [])
@@ -161,7 +160,7 @@ def run(ctx, args):
         # image's to resolve, whatever its passwd and group files say.
         ctx.docker.remove(container)
         if assessment.kind == "fallback":
-            notice(fallback_notice(ctx, parsed.image))
+            messages.notice(fallback_notice(ctx, parsed.image))
         created = create_checked(ctx, parsed, [f"--user={pinned_user(ctx, assessment)}"])
         if isinstance(created, int):
             return created
@@ -203,7 +202,7 @@ def create_checked(ctx, parsed, extra):
         assessment = Assessment("refused", [str(e)])
     if assessment.kind == "refused":
         ctx.docker.remove(container)
-        return refuse(explain(assessment))
+        return messages.refuse(explain(assessment))
     return container, info, assessment
 
 
@@ -220,19 +219,20 @@ def audit(ctx, args):
         if parsed.command or any(not t.startswith("--user=") for t in parsed.create_args[:-1]):
             raise runargs.ParseError("only --allow-me, --user, --as and --as-me can come before the image")
     except runargs.ParseError as e:
-        print(f"dockscreen: {printable(e)}\n{usage}", file=sys.stderr)
+        messages.notice(e)
+        messages.notice(usage)
         return 2
     except hostusers.UserError as e:
-        return refuse([str(e)])
+        return messages.refuse([str(e)])
     for message in parsed.notices:
-        notice(message)
+        messages.notice(message)
     ctx = allowing_me(ctx, parsed.allow_me)
 
     image = parsed.image
     code, container = ctx.docker.create(["--pull=never", *parsed.create_args])
     if container is None:
-        print(f"dockscreen: image {printable(image)} is not available locally; run `docker pull` first "
-              "(pulling does not run the image), then audit it", file=sys.stderr)
+        messages.notice(f"image {image} is not available locally; run `docker pull` first "
+                        "(pulling does not run the image), then audit it")
         return code or 1
     try:
         info = ctx.docker.inspect_container(container)
@@ -293,7 +293,7 @@ def create_args(args, current_user=None, resolve=None):
     except runargs.ParseError:
         return args
     for message in parsed.notices:
-        notice(message)
+        messages.notice(message)
     return parsed.create_args
 
 
@@ -352,13 +352,3 @@ def explain(assessment):
     if assessment.identity is None:
         return assessment.problems
     return [f"{p}; {CHOOSE_HINT}" for p in assessment.problems]
-
-
-def notice(text):
-    print(f"dockscreen: {printable(text)}", file=sys.stderr)
-
-
-def refuse(problems):
-    for problem in problems:
-        print(f"dockscreen: refusing: {printable(problem)}", file=sys.stderr)
-    return 1

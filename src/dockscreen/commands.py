@@ -16,6 +16,7 @@ from dockscreen import (
     composeimages,
     composerun,
     hardening,
+    messages,
     patch,
     policy,
     realdocker,
@@ -51,7 +52,7 @@ def doctor(global_args, args, allow_me=False):
 def audit(global_args, args, allow_me=False):
     """Run the checks that screen `up` without starting anything; pulls and builds images as up would."""
     if args:
-        print("usage: dockscreen [compose options] audit", file=sys.stderr)
+        messages.notice("usage: dockscreen [compose options] audit")
         return 2
 
     lines = []
@@ -74,16 +75,15 @@ def audit(global_args, args, allow_me=False):
         lines.append("the images were not looked at because of the problems above: "
                      "nothing was pulled or built")
     elif config is not None:
-        print("dockscreen: pulling or building the images as `up` would, to look at the users they run as",
-              file=sys.stderr)
+        messages.notice("pulling or building the images as `up` would, to look at the users they run as")
         with composerun.generated(global_args, project_dir) as command:
             prepared = composeimages.prepare(command(hardened), hardened, [], tools)
         problems = prepared.problems
         lines += composeimages.describe(hardened, prepared, tools.gate_ctx)
 
-    passed = screen.report(problems)
+    passed = messages.report(problems)
     if passed:
-        print("dockscreen: audit passed", file=sys.stderr)
+        messages.notice("audit passed")
     if config is not None:
         for line in lines:
             print(printable(line))
@@ -114,21 +114,21 @@ def harden(global_args, args, allow_me=False):
         if screen.is_remote(global_args, os.environ, tools.docker):
             raise screen.ScreenError(screen.REMOTE_MESSAGE)
     except (screen.ScreenError, ValueError) as e:
-        print(f"dockscreen: {printable(e)}", file=sys.stderr)
+        messages.notice(e)
         return 1
 
     fixed = autofix.fix_config(base, static)
     remaining = policy.check_config(autofix.resolve_user_template(fixed, static), static)
     notes = [hardening.defaults_note()]
     if remaining:
-        print("dockscreen: the images were not looked at because of the problems below: "
-              "nothing was pulled or built", file=sys.stderr)
+        messages.notice("the images were not looked at because of the problems below: "
+                        "nothing was pulled or built")
     else:
         remaining, notes = fix_image_users(global_args, project_dir, fixed, notes, tools)
 
     sys.stdout.write(patch.render(base, fixed, remaining, notes=notes))
     for problem in remaining:
-        print(f"dockscreen: cannot fix automatically: {printable(problem)}", file=sys.stderr)
+        messages.notice(f"cannot fix automatically: {problem}")
     return 1 if remaining else 0
 
 

@@ -17,7 +17,6 @@ import json
 import os
 import signal
 import subprocess
-import sys
 import tempfile
 
 from dockscreen import (
@@ -28,13 +27,13 @@ from dockscreen import (
     hostusers,
     idrules,
     imageuser,
+    messages,
     policy,
     realdocker,
     screen,
     shellenv,
 )
 from dockscreen.dockerclient import Docker
-from dockscreen.text import printable
 
 # Options that select the files and the project; ours replace them.
 REPLACED_OPTIONS = ("--file", "-f", "--project-directory", "--project-name", "-p")
@@ -63,7 +62,7 @@ def run(argv, idx, tools=None, allow_me=False):
             problems.append(screen.REMOTE_MESSAGE)
     except (screen.ScreenError, hostusers.UserError, ValueError) as e:
         problems = [str(e)]
-    if not screen.report(problems):
+    if not messages.report(problems):
         return 1
 
     lines = [*parsed.notices, *screen.mount_dir_warnings(os.environ),
@@ -73,14 +72,14 @@ def run(argv, idx, tools=None, allow_me=False):
     lines += shellenv.describe(hardened, os.environ)
     with generated(global_args, project_dir) as command:
         prepared = composeimages.prepare(command(hardened), hardened, args, tools, chosen(parsed))
-        if not screen.report(prepared.problems):
+        if not messages.report(prepared.problems):
             return 1
         final, vetted = composeimages.finalize(hardened, prepared, tools.gate_ctx)
-        if not screen.report(policy.check_config(final, ctx._replace(vetted=vetted))):  # what will run
+        if not messages.report(policy.check_config(final, ctx._replace(vetted=vetted))):  # what will run
             return 1
         for line in [*lines, *composeimages.notices(prepared, tools.gate_ctx)]:
             if line:
-                print(f"dockscreen: {printable(line)}", file=sys.stderr)
+                messages.notice(line)
         return tools.run_child([*command(final), argv[idx], *args])
 
 
@@ -140,7 +139,7 @@ def run_child(cmd):
     try:
         process = subprocess.Popen(cmd)
     except FileNotFoundError:
-        print("dockscreen: 'docker' not found in PATH", file=sys.stderr)
+        messages.notice(messages.DOCKER_NOT_FOUND)
         return 127
     def forward(number, frame):
         process.send_signal(number)

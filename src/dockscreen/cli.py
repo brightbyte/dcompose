@@ -8,7 +8,18 @@ parse is the position of the subcommand.
 import os
 import sys
 
-from dockscreen import composeargs, composerun, config, hostusers, ids, policy, realdocker, screen, skipflag
+from dockscreen import (
+    composeargs,
+    composerun,
+    config,
+    hostusers,
+    ids,
+    messages,
+    policy,
+    realdocker,
+    screen,
+    skipflag,
+)
 from dockscreen.commands import ALIASES, COMMANDS
 
 # Subcommands that create containers from the config. `alpha` is a group (older
@@ -56,7 +67,7 @@ def forward(argv):
         binary = realdocker.docker_bin()
         os.execvp(binary, [binary, "compose", *argv])
     except FileNotFoundError:
-        sys.exit("dockscreen: 'docker' not found in PATH")
+        messages.fatal(messages.DOCKER_NOT_FOUND)
 
 
 def main(argv=None):
@@ -64,8 +75,7 @@ def main(argv=None):
     try:
         return dispatch(argv)
     except config.ConfigError as e:
-        print(f"dockscreen: refusing: config file {e}", file=sys.stderr)
-        return 1
+        return messages.refuse([f"config file {e}"])
 
 
 def dispatch(argv):
@@ -77,7 +87,7 @@ def dispatch(argv):
     allow_me, argv = skipflag.strip(argv, GLOBAL_OPTS_WITH_VALUE, ALLOW_ME_FLAG)
     as_me, argv = skipflag.strip(argv, GLOBAL_OPTS_WITH_VALUE, composeargs.AS_ME_FLAG)
     if as_me:
-        print(f"dockscreen: {composeargs.AS_ME_MESSAGE}", file=sys.stderr)
+        messages.notice(composeargs.AS_ME_MESSAGE)
         return 2
     config.current()  # a config file that cannot be trusted stops everything, before any docker runs
     ids.export(os.environ)
@@ -92,19 +102,30 @@ def dispatch(argv):
         if not screen.passes(argv[:idx], policy.check_build_config):
             return 1
     elif idx is not None and argv[idx] == "exec" and argv[idx + 1:idx + 2] != ["--help"]:
-        try:
-            parsed = composeargs.parse("exec", argv[idx + 1:])
-        except hostusers.UserError as e:
-            screen.report([str(e)])
+        args = rewrite_exec("exec", argv[idx + 1:])
+        if args is None:
             return 1
-        for notice in parsed.notices:
-            print(f"dockscreen: {notice}", file=sys.stderr)
-        argv = [*argv[:idx + 1], *parsed.args]
+        argv = [*argv[:idx + 1], *args]
 
     if wants_help(argv, idx):
         print_help()
 
     forward(argv)
+
+
+def rewrite_exec(kind, args):
+    """The arguments of `exec` (kind: "exec" or "docker exec") with --as and --as-me replaced by ids.
+
+    None if the user they give cannot be used; that has been reported.
+    """
+    try:
+        parsed = composeargs.parse(kind, args)
+    except hostusers.UserError as e:
+        messages.report([str(e)])
+        return None
+    for notice in parsed.notices:
+        messages.notice(notice)
+    return parsed.args
 
 
 def is_screened(argv, idx):
