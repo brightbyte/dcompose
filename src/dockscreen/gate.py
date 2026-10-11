@@ -15,10 +15,13 @@ be rewritten. `create` only gets the hardening defaults; its container is
 checked when it is started. `audit` predicts the outcome for an image.
 """
 
+from typing import Protocol, runtime_checkable
+
 from dockscreen import argscan, hostusers, imageuser, messages, runargs
 from dockscreen.dockerclient import DockerError
 from dockscreen.imagedecision import (
     Assessment,
+    DockerAccess,
     Kind,
     assess,
     default_user_spec,
@@ -26,6 +29,14 @@ from dockscreen.imagedecision import (
     root_default_notice,
 )
 from dockscreen.text import printable
+
+@runtime_checkable
+class RunnableDocker(DockerAccess, Protocol):
+    """What `docker run` needs from docker on top of deciding: ctx.docker in this module is one."""
+
+    def start(self, container, attach, interactive, detach_keys):
+        """Start the container; its exit code when attached."""
+
 
 # Inserted before the user's own arguments, so the user can override both
 # (for example `--cap-add NET_BIND_SERVICE`).

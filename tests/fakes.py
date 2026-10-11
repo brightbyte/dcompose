@@ -113,6 +113,59 @@ class FakeImages:
         self._containers.pop(container, None)
 
 
+class FakeDocker:
+    """Records calls. `image_user` is the image's USER; `container_user` is what the container reports."""
+
+    def __init__(self, image_user="", container_user=None, image="img", command=None, passwd=PASSWD,
+                 group=GROUP, open_stdin=False, create_code=0, context="default", image_missing=False,
+                 info_extra=None, repo_digests=None):
+        self.image_user = image_user
+        self.container_user = image_user if container_user is None else container_user
+        self.image, self.command = image, command or []
+        self.passwd, self.group = passwd, group
+        self.open_stdin, self.create_code, self.current_context = open_stdin, create_code, context
+        self.image_missing = image_missing
+        self.info_extra = info_extra or {}  # for example {"Mounts": [{"Type": "bind"}]}
+        self.repo_digests = repo_digests or []  # where the image was pulled from
+        self.calls = []
+
+    def create(self, args):
+        self.calls.append(("create", args))
+        if "--pull=never" in args and self.image_missing:
+            return 1, None
+        for arg in args:
+            if arg.startswith("--user="):
+                self.container_user = arg[len("--user="):]
+        return (self.create_code, "cid1" if self.create_code == 0 else None)
+
+    def inspect_container(self, ref):
+        self.calls.append(("inspect", ref))
+        if ref == "gone":
+            raise DockerError("No such container: gone")
+        return {"Id": "id-" + ref, "Image": "sha256:abc", "Config": {
+            "Image": self.image, "Cmd": self.command, "User": self.container_user,
+            "OpenStdin": self.open_stdin}, **self.info_extra}
+
+    def inspect_image(self, ref):
+        return {"Config": {"User": self.image_user}, "RepoDigests": self.repo_digests}
+
+    def read_file(self, container, path):
+        return {"/etc/passwd": self.passwd, "/etc/group": self.group}[path]
+
+    def start(self, container, attach, interactive, detach_keys):
+        self.calls.append(("start", container, attach, interactive, detach_keys))
+        return 42
+
+    def remove(self, container):
+        self.calls.append(("remove", container))
+
+    def context(self):
+        return self.current_context
+
+    def names(self):
+        return [call[0] for call in self.calls]
+
+
 class Recorder:
     """What the tools were asked to run: compose commands, and the config file each one would read."""
 

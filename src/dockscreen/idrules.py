@@ -19,21 +19,28 @@ Allowed ids: the nobody range and the default user from the config file, ids the
 check (a configured image user), and the caller's own ids when --allow-me was given.
 """
 
-from typing import NamedTuple
+from typing import NamedTuple, Protocol, runtime_checkable
 
 from dockscreen import config as configuration
+from dockscreen import hostusers
 
 SUBUID_FILE = "/etc/subuid"
 SUBGID_FILE = "/etc/subgid"
 
 
+@runtime_checkable
+class SubordinateRanges(Protocol):
+    def contains(self, kind, value):
+        """Whether value is in a subordinate range; kind: "uid" or "gid"."""
+
+
 class Rules(NamedTuple):
-    me: tuple                # (uid, gid) of the caller
-    allow_me: bool           # --allow-me (or --as-me on docker run)
-    nobody_range: tuple      # inclusive (low, high)
-    default_user: tuple      # (uid, gid) that replaces root
-    local: object            # hostusers.HostAccounts: the accounts on this host
-    subordinate: object      # Subordinate: ranges in /etc/subuid and /etc/subgid
+    me: tuple                              # (uid, gid) of the caller
+    allow_me: bool                         # --allow-me (or --as-me on docker run)
+    nobody_range: tuple                    # inclusive (low, high)
+    default_user: tuple                    # (uid, gid) that replaces root
+    local: hostusers.AccountsById          # the accounts on this host
+    subordinate: SubordinateRanges         # ranges in /etc/subuid and /etc/subgid (Subordinate)
 
     def allowed(self, kind, value, extra=()):
         """Whether value is an allowed id. kind: "uid" or "gid"; extra: further allowed (uid, gid) pairs."""

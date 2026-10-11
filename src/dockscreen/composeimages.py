@@ -24,6 +24,7 @@ chose (`run -u`), which the command line then overrides.
 
 import copy
 import json
+import subprocess
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -36,9 +37,9 @@ class ImageError(Exception):
 
 
 class Tools(NamedTuple):
-    gate_ctx: object      # imagedecision.Context, with the docker to use
-    capture: Callable     # cmd -> CompletedProcess with text stdout
-    run_child: Callable   # cmd -> exit code, with the terminal
+    gate_ctx: imagedecision.Context                         # with the docker to use
+    capture: Callable[[list], subprocess.CompletedProcess]  # with text stdout
+    run_child: Callable[[list], int]                        # the exit code, with the terminal
 
 
 class Decision(NamedTuple):

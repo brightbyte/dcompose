@@ -7,6 +7,7 @@ name of an account on this host and turns it into ids before docker sees it.
 
 import grp
 import pwd
+from typing import Protocol, runtime_checkable
 
 from dockscreen import ids
 
@@ -79,6 +80,33 @@ class UserOptions:
         """--as-me: the caller's own ids, which are then allowed."""
         self.user_given = self.allow_me = True
         return f"--user={ids.format_user(self.current_user)}"
+
+
+@runtime_checkable
+class AccountsByName(Protocol):
+    """Users and groups looked up by name, as hardening and --as need them."""
+
+    def user(self, name):
+        """(uid, primary gid) of the user called name, or None."""
+
+    def group(self, name):
+        """The gid of the group called name, or None."""
+
+
+@runtime_checkable
+class AccountsById(Protocol):
+    """Users and groups looked up by id, as the id rules and descriptions need them."""
+
+    def user_name(self, uid):
+        """The name of the user with this uid, or None."""
+
+    def group_name(self, gid):
+        """The name of the group with this gid, or None."""
+
+
+@runtime_checkable
+class Accounts(AccountsByName, AccountsById, Protocol):
+    """Both lookups, as HostAccounts provides them."""
 
 
 class HostAccounts:

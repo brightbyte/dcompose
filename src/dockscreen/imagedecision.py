@@ -17,15 +17,39 @@ Used by `docker run` (gate) and by compose (composeimages) alike.
 """
 
 import enum
-from typing import NamedTuple
+from typing import NamedTuple, Protocol, runtime_checkable
 
-from dockscreen import ids, images, imageuser
+from dockscreen import idrules, ids, images, imageuser
+from dockscreen.runtime import Runtime
+
+
+@runtime_checkable
+class DockerAccess(Protocol):
+    """What deciding needs from docker (dockerclient.Docker): a container to look at, never started."""
+
+    def create(self, args):
+        """(exit code, container id or None) for `docker create args`."""
+
+    def inspect_container(self, ref):
+        """`docker container inspect` of ref; raises dockerclient.DockerError."""
+
+    def inspect_image(self, ref):
+        """`docker image inspect` of ref; raises dockerclient.DockerError."""
+
+    def read_file(self, container, path):
+        """The text of a file in a container that was not started, or None."""
+
+    def remove(self, container):
+        """Remove the container."""
+
+    def context(self):
+        """The name of the current docker context, or None."""
 
 
 class Context(NamedTuple):
-    docker: object
-    ids: object      # idrules.Rules
-    runtime: object  # runtime.Runtime: the config file, the caller's ids, the host's accounts
+    docker: DockerAccess
+    ids: idrules.Rules
+    runtime: Runtime  # the config file, the caller's ids, the host's accounts
 
     @property
     def local(self):

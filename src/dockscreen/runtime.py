@@ -5,6 +5,7 @@ caller's ids, the environment or the host's accounts on its own.
 """
 
 import os
+from collections.abc import MutableMapping
 from typing import NamedTuple
 
 from dockscreen import config, hostusers, idrules, realdocker
@@ -13,12 +14,12 @@ from dockscreen.dockerclient import Docker
 
 class Runtime(NamedTuple):
     settings: config.Config
-    docker: Docker       # the real docker
-    accounts: object     # hostusers.HostAccounts
-    subordinate: object  # idrules.Subordinate
-    me: tuple            # the caller's real (uid, gid)
-    env: object          # the environment, which compose and docker inherit
-    home: str            # the caller's home directory
+    docker: Docker                          # the real docker
+    accounts: hostusers.Accounts
+    subordinate: idrules.SubordinateRanges  # ranges in /etc/subuid and /etc/subgid
+    me: tuple                               # the caller's real (uid, gid)
+    env: MutableMapping                     # the environment, which compose and docker inherit
+    home: str                               # the caller's home directory
 
     def rules(self, allow_me=False):
         """The id rules; allow_me: --allow-me was given, so the caller's own ids are allowed."""
