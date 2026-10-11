@@ -36,40 +36,66 @@ class LocalIds:
             return None
 
 
+# What Go's unicode.IsSpace trims; Python's str.strip() differs (it also strips \x1c to \x1f).
+GO_SPACE = "\t\n\v\f\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009" \
+           "\u200a\u2028\u2029\u202f\u205f\u3000"
+INT64_MAX = 2**63 - 1
+INT64_MIN = -(2**63)
+
+
+def lines(text):
+    """The non-empty lines of a passwd or group file as moby reads them: split on newlines only,
+    each stripped of surrounding whitespace."""
+    stripped = (line.strip(GO_SPACE) for line in text.split("\n"))
+    return [line for line in stripped if line]
+
+
+def atoi(text):
+    """Go's strconv.Atoi with the error ignored, as moby does: a sign and ASCII digits, else 0;
+    a number out of range is the nearest limit."""
+    digits = text[1:] if text[:1] in "+-" else text
+    if not (digits and all(c in "0123456789" for c in digits)):
+        return 0
+    return max(INT64_MIN, min(INT64_MAX, int(text)))
+
+
+def fields(line, count):
+    """The first count colon-separated fields; fields missing from a short line are empty."""
+    parts = line.split(":")[:count]
+    return parts + [""] * (count - len(parts))
+
+
 def parse_passwd(text):
-    """[(name, uid, gid)], skipping malformed lines."""
+    """[(name, uid, gid)] like moby: a line with missing or malformed numbers has uid 0 and gid 0."""
     entries = []
-    for line in text.splitlines():
-        fields = line.split(":")
-        if len(fields) >= 4 and fields[2].isascii() and fields[2].isdigit() \
-                and fields[3].isascii() and fields[3].isdigit():
-            entries.append((fields[0], int(fields[2]), int(fields[3])))
+    for line in lines(text):
+        name, _, uid, gid, *_ = fields(line, 7)
+        entries.append((name, atoi(uid), atoi(gid)))
     return entries
 
 
 def parse_group(text):
-    """[(name, gid, members)], skipping malformed lines."""
+    """[(name, gid, members)] like moby."""
     entries = []
-    for line in text.splitlines():
-        fields = line.split(":")
-        if len(fields) >= 3 and fields[2].isascii() and fields[2].isdigit():
-            members = fields[3].split(",") if len(fields) > 3 and fields[3] else []
-            entries.append((fields[0], int(fields[2]), members))
+    for line in lines(text):
+        name, _, gid, members = fields(line, 4)
+        entries.append((name, atoi(gid), members.split(",") if members else []))
     return entries
 
 
 def resolve(spec, passwd_text, group_text):
     """Mirror how docker turns a `user[:group]` spec into ids, using the image's files.
 
-    A numeric uid without a passwd entry gets gid 0. Raises ValueError for a
-    name the image does not define, which docker would refuse to start too.
+    A numeric user or group is an id, never a name (moby looks it up by number only). A numeric
+    uid without a passwd entry gets gid 0. Raises ValueError for a name the image does not define,
+    which docker would refuse to start too, and for a negative id.
     """
     passwd = parse_passwd(passwd_text)
     groups = parse_group(group_text)
     user_part, _, group_part = (spec or "0").partition(":")
+    user_part = user_part or "0"  # moby: no user means the default, uid 0
 
-    entry = next((p for p in passwd if p[0] == user_part or (_is_id(user_part) and p[1] == int(user_part))),
-                 None)
+    entry = find(passwd, user_part)
     if entry:
         username, uid, default_gid = entry
     elif _is_id(user_part):
@@ -79,10 +105,7 @@ def resolve(spec, passwd_text, group_text):
 
     gid = default_gid
     if group_part:
-        group = next(
-            (g for g in groups if g[0] == group_part or (_is_id(group_part) and g[1] == int(group_part))),
-            None,
-        )
+        group = find(groups, group_part)
         if group:
             gid = group[1]
         elif _is_id(group_part):
@@ -90,12 +113,23 @@ def resolve(spec, passwd_text, group_text):
         else:
             raise ValueError(f"group {group_part!r} is not defined in the image")
 
+    if min(uid, gid) < 0:
+        raise ValueError("the image's user has a negative id")
     supplementary = tuple(sorted({g[1] for g in groups if username and username in g[2]}))
     return Identity(uid, gid, supplementary)
 
 
+def find(entries, arg):
+    """The first entry (name, id, ...) that arg names: by id if arg is a number, else by name."""
+    if _is_id(arg):
+        return next((e for e in entries if e[1] == int(arg)), None)
+    return next((e for e in entries if e[0] == arg), None)
+
+
 def _is_id(text):
-    return text.isascii() and text.isdigit()
+    """Whether Go's Atoi reads text as a number: an optional sign and ASCII digits."""
+    digits = text[1:] if text[:1] in "+-" else text
+    return bool(digits) and all(c in "0123456789" for c in digits)
 
 
 def involves_root(identity):

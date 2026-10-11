@@ -6,6 +6,10 @@ that cannot change between check and start. The one image-derived fact checked
 is the identity the container would run as (see imageuser), unless the command
 line sets a user: the person typing the command is trusted, the image is not.
 
+An image user that is accepted is not left for the runtime to resolve a second time: the container
+is re-created with `--user uid:gid` as the checked numbers, so a difference between our reading of the
+image's passwd and group files and the runtime's can at worst refuse a good image, never run root.
+
 With no user chosen on the command line: an image that would run as root is run as nobody
 instead, with a notice; so is any image user at all if the container has bind mounts (or
 devices), because a container that reaches host files must have its user chosen by the person
@@ -121,10 +125,14 @@ def run(ctx, args):
         return created
     container, info, assessment = created
 
-    if assessment.kind == "fallback":
+    if assessment.kind in ("fallback", "ok"):
+        # Both are re-created with the user spelled as numbers: the runtime then has nothing of the
+        # image's to resolve, whatever its passwd and group files say.
         ctx.docker.remove(container)
-        notice(fallback_notice(parsed.image, assessment, ctx.local))
-        created = create_checked(ctx, parsed, [f"--user={FALLBACK_USER}"])
+        if assessment.kind == "fallback":
+            notice(fallback_notice(parsed.image, assessment, ctx.local))
+        user = FALLBACK_USER if assessment.kind == "fallback" else image_user_spec(assessment)
+        created = create_checked(ctx, parsed, [f"--user={user}"])
         if isinstance(created, int):
             return created
         container, info, assessment = created
@@ -155,7 +163,7 @@ def fallback_notice(image, assessment, local):
     if assessment.reason == "mounts":
         advice = f"To run it as the image's user, pass --user {image_user_spec(assessment)}."
     else:
-        advice = "Use --user ID, --as NAME or --as-me to choose another user."
+        advice = "Use --user UID:GID, --as NAME or --as-me to choose another user."
     return f"{summary}; running it as nobody ({FALLBACK_USER}) instead. {advice}"
 
 
@@ -182,7 +190,7 @@ def create_checked(ctx, parsed, extra):
 
 
 def audit(ctx, args):
-    """`docker audit [--user ID | --as NAME | --as-me] IMAGE`: what `docker run IMAGE` would do.
+    """`docker audit [--user UID:GID | --as NAME | --as-me] IMAGE`: what `docker run IMAGE` would do.
 
     Exit status 1 means it would be refused.
     """
@@ -192,7 +200,7 @@ def audit(ctx, args):
         if parsed.command or any(not t.startswith("--user=") for t in parsed.create_args[:-1]):
             raise runargs.ParseError("only --user, --as and --as-me can come before the image")
     except runargs.ParseError as e:
-        print(f"dcompose: {printable(e)}\nusage: docker audit [--user ID | --as NAME | --as-me] IMAGE",
+        print(f"dcompose: {printable(e)}\nusage: docker audit [--user UID:GID | --as NAME | --as-me] IMAGE",
               file=sys.stderr)
         return 2
     except hostusers.UserError as e:
@@ -233,7 +241,7 @@ def report_assessment(image, outcomes, local):
             print(f"image {name}, without bind mounts: {texts[0]}")
             print(f"image {name}, with bind mounts or devices: {texts[1]}")
     if any(a.kind == "refused" for a in outcomes):
-        print("  pass --user ID, --as NAME or --as-me to choose a user yourself")
+        print("  pass --user UID:GID, --as NAME or --as-me to choose a user yourself")
     else:
         print("docker run also adds " + " ".join(DEFAULTS) + "; later options override them")
     return 1 if any(a.kind == "refused" for a in outcomes) else 0
@@ -276,7 +284,7 @@ def check_existing(ctx, args):
             assessment = assess(ctx, info["Id"], info)
             if assessment.kind == "fallback":  # an existing container cannot be rewritten
                 summary = fallback_summary("its image", assessment, ctx.local)
-                problems.append(f"{ref}: {summary}; recreate it with --user ID, --as NAME or --as-me")
+                problems.append(f"{ref}: {summary}; recreate it with --user UID:GID, --as NAME or --as-me")
             else:
                 problems += [f"{ref}: {p}" for p in explain(assessment)]
         except (DockerError, ValueError, KeyError) as e:

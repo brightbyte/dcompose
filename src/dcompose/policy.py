@@ -133,7 +133,7 @@ def unknown_keys(mapping, allowed, what, extensions=True):
 def check_service(service, ctx, vetted=False):
     problems = unknown_keys(service, HARMLESS_SERVICE_KEYS | SERVICE_CHECKS.keys(), "key")
     for key, check in SERVICE_CHECKS.items():
-        if key == "user" and vetted and not service.get("user"):
+        if key == "user" and vetted:
             continue
         if key in REQUIRED_SERVICE_KEYS or key in service:
             problems += check(service.get(key), ctx)

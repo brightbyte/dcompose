@@ -89,11 +89,25 @@ def test_an_image_choosing_a_user_the_host_has_is_refused_and_the_container_remo
     assert docker.names() == ["create", "inspect", "remove"]  # never started
 
 
-@pytest.mark.parametrize("image_user", ["pg", "998", "app", "424242:7"])
-def test_without_mounts_the_images_own_non_root_user_is_kept_whatever_its_id(image_user, capsys):
+@pytest.mark.parametrize("image_user, ids", [
+    ("pg", "998:998"), ("998", "998:998"), ("app", "100000:100001"), ("424242:7", "424242:7")])
+def test_without_mounts_the_images_own_non_root_user_is_kept_whatever_its_id(image_user, ids, capsys):
     docker = FakeDocker(image_user=image_user)
     assert gate.run(ctx(docker), ["img"]) == 42
-    assert docker.names().count("create") == 1 and "nobody" not in capsys.readouterr().err
+    assert f"--user={ids}" in docker.calls[3][1]  # the second create: pinned
+    assert "nobody" not in capsys.readouterr().err
+
+
+def test_an_accepted_image_user_is_pinned_as_numbers_so_the_runtime_resolves_nothing():
+    docker = FakeDocker(image_user="app")
+
+    assert gate.run(ctx(docker), ["img"]) == 42
+
+    # created as the image has it, checked, removed, and created again with the checked ids
+    assert docker.names() == ["create", "inspect", "remove", "create", "inspect", "start"]
+    assert "--user=100000:100001" not in docker.calls[0][1]
+    assert docker.calls[3][1] == [*DEFAULTS, "--user=100000:100001", "img"]
+    assert docker.calls[-1][:2] == ("start", "cid1")
 
 
 # --- mounts: the user must be chosen explicitly --------------------------------------
@@ -147,13 +161,13 @@ def test_devices_and_volumes_from_count_as_mounts(extra, capsys):
 def test_named_volumes_do_not_make_the_user_explicit(capsys):
     docker = FakeDocker(image_user="app", info_extra={"Mounts": [{"Type": "volume", "Name": "data"}]})
     assert gate.run(ctx(docker), ["img"]) == 42
-    assert docker.names().count("create") == 1
+    assert "--user=100000:100001" in docker.calls[3][1] and "nobody" not in capsys.readouterr().err
 
 
 def test_an_image_that_is_already_nobody_needs_no_fallback_with_mounts():
     docker = FakeDocker(image_user="nobody", info_extra=BIND)
     assert gate.run(ctx(docker), ["img"]) == 42
-    assert docker.names().count("create") == 1
+    assert "--user=65534:65534" in docker.calls[3][1]
 
 
 def test_a_host_account_id_with_mounts_is_replaced_not_refused(capsys):
@@ -192,7 +206,7 @@ def test_an_image_that_would_run_as_root_is_run_as_nobody_instead(image_user, ca
 
 
 @pytest.mark.parametrize("flags", [
-    ["--user", "1000:1000"], ["-u", "0"], ["--user=0"], ["--as-me"], ["--as", "alice"],
+    ["--user", "1000:1000"], ["-u", "0:0"], ["--user=0:0"], ["--as-me"], ["--as", "alice"],
 ])
 def test_a_user_on_the_command_line_prevents_the_fallback(flags, capsys):
     docker = FakeDocker(image_user="")  # root, which would fall back without the flag
@@ -228,7 +242,8 @@ def test_a_user_on_the_command_line_is_trusted():
 def test_existing_containers_cannot_be_rewritten_so_a_root_image_is_refused():
     docker = FakeDocker(image_user="")
     problems = gate.check_existing(ctx(docker), ["c1"])
-    assert problems == ["c1: its image would run as root; recreate it with --user ID, --as NAME or --as-me"]
+    assert problems == [
+        "c1: its image would run as root; recreate it with --user UID:GID, --as NAME or --as-me"]
 
 
 def test_an_existing_container_with_mounts_needs_its_user_chosen_too():
@@ -417,14 +432,14 @@ def test_audit_predicts_a_refusal_without_mounts_and_exits_one(capsys):
             "gid 1000 (local group daniel)): the image would run with uid 1000, which exists on this host "
             "(local user daniel)") in out
     assert "image img, with bind mounts or devices: would run as uid 1000 (local user daniel)" in out
-    assert "pass --user ID, --as NAME or --as-me to choose a user yourself" in out
+    assert "pass --user UID:GID, --as NAME or --as-me to choose a user yourself" in out
 
 
 def test_audit_with_a_user_does_not_check_the_image(capsys):
     docker = FakeDocker(image_user="")
-    assert audit(docker, "--user", "1000", "img") == 0
+    assert audit(docker, "--user", "1000:1000", "img") == 0
     assert "the user is set on the command line" in capsys.readouterr().out
-    assert docker.calls[0][1] == ["--pull=never", "--user=1000", "img"]
+    assert docker.calls[0][1] == ["--pull=never", "--user=1000:1000", "img"]
 
 
 def test_audit_of_an_image_that_is_not_local_says_how_to_proceed(capsys):
@@ -495,7 +510,7 @@ def test_user_with_a_name_is_refused_before_anything_is_created(flags, capsys):
     docker = FakeDocker()
     assert gate.run(ctx(docker), [*flags, "img"]) == 1
     err = capsys.readouterr().err
-    assert "--user takes a numeric id" in err and "--as NAME runs as a local user" in err
+    assert "--user takes numeric ids as uid:gid" in err and "--as NAME runs as a local user" in err
     assert docker.calls == []
 
 
@@ -507,7 +522,7 @@ def test_audit_takes_as_and_refuses_names_for_user(capsys):
     assert "Resolving user alice to uid 4242, gid 4343" in captured.err
 
     assert audit(FakeDocker(), "--user", "alice", "img") == 1
-    assert "--user takes a numeric id" in capsys.readouterr().err
+    assert "--user takes numeric ids as uid:gid" in capsys.readouterr().err
 
 
 def test_create_resolves_as_and_keeps_everything_else(routed, monkeypatch, capsys):

@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from fakes import FakeImages, make_tools
+from fakes import FakeImages, make_tools, read_raw
 
 from dcompose import composerun, guard
 
@@ -145,14 +145,14 @@ def test_images_are_acquired_from_a_config_that_still_has_the_projects_pull_poli
     assert config["services"]["web"]["pull_policy"] == "always"
 
 
-def test_an_acceptable_image_user_is_left_to_the_image(monkeypatch, tmp_path, capsys):
+def test_an_acceptable_image_user_is_kept_but_pinned_as_numbers(monkeypatch, tmp_path, capsys):
     inspect_as(monkeypatch, tmp_path, no_user())
     tools, recorder = make_tools(FakeImages(users={"x:1": "app"}))
 
     assert up(["up"], 0, tools) == 0
 
     web = last(recorder)[1]["services"]["web"]
-    assert "user" not in web and web["pull_policy"] == "never"
+    assert web["user"] == "100000:100001" and web["pull_policy"] == "never"
     assert "nobody" not in capsys.readouterr().err
 
 
@@ -185,7 +185,7 @@ def test_a_service_that_is_not_started_gets_nobody_as_a_fail_safe(monkeypatch, t
 
     services = last(recorder)[1]["services"]
     assert services["debug"]["user"] == "65534:65534" and "pull_policy" not in services["debug"]
-    assert "user" not in services["web"]
+    assert services["web"]["user"] == "100000:100001"
 
 
 @pytest.mark.parametrize("args, kept", [
@@ -216,3 +216,40 @@ def test_run_child_passes_termination_to_the_child_and_restores_handlers():
     timer.cancel()
     assert code == 9
     assert signal.getsignal(signal.SIGTERM) == before
+
+
+def test_dollars_are_written_as_compose_printed_them(monkeypatch, tmp_path):
+    # `config` prints a literal $ as $$, and compose reads $$ back as a literal $: escaping again
+    # would make `$$` into `$$$$` and the config would no longer be the one that was checked
+    inspect_as(monkeypatch, tmp_path, project_config(pid="$${P:-host}", labels={"a": "$$x"}))
+    raw = []
+    tools, _ = make_tools(FakeImages(users={"x:1": "app"}),
+                                 on_child=lambda cmd: raw.append(read_raw(cmd)))
+
+    assert up(["up"], 0, tools) == 0
+
+    assert all('"$${P:-host}"' in text and '"$$x"' in text for text in raw)
+
+
+def test_a_config_compose_would_read_differently_is_refused_and_not_run(monkeypatch, tmp_path, capsys):
+    inspect_as(monkeypatch, tmp_path, project_config(pid="${P:-host}"))
+    tools, recorder = make_tools(FakeImages(users={"x:1": "app"}), reads=lambda c: {**c, "name": "other"})
+
+    assert up(["up"], 0, tools) == 1
+
+    assert "reads the checked config differently at config.name" in capsys.readouterr().err
+    assert recorder.children == []
+
+
+def test_variables_taken_from_the_shell_are_announced_by_name_and_service_but_not_run_differently(
+        monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("FROMSHELL", "secret")
+    inspect_as(monkeypatch, tmp_path, project_config(environment={"FROMSHELL": "secret", "OWN": "x"}))
+    tools, recorder = make_tools(FakeImages(users={"x:1": "app"}))
+
+    assert up(["up"], 0, tools) == 0
+
+    err = capsys.readouterr().err
+    assert "service web: environment variables taken from your shell: FROMSHELL" in err
+    assert "secret" not in err
+    assert last(recorder)[1]["services"]["web"]["environment"] == {"FROMSHELL": "secret", "OWN": "x"}

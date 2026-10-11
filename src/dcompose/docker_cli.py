@@ -48,7 +48,7 @@ def gated(argv, sub, idx, end):
     lead, args = argv[:end + 1], argv[end + 1:]
     if sub == "audit":
         if not args or args[:1] == ["--help"]:
-            print("usage: docker audit [--user ID | --as NAME | --as-me] IMAGE\n"
+            print("usage: docker audit [--user UID:GID | --as NAME | --as-me] IMAGE\n"
                   "Predict what `docker run IMAGE` would do: run, run as nobody, or be refused.",
                   file=sys.stderr)
             return 2

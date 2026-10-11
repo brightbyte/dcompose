@@ -7,10 +7,21 @@ a command can pass them on when it shells out to docker compose.
 A name registered here shadows the docker compose subcommand of the same name.
 """
 
+import os
 import subprocess
 import sys
 
-from dcompose import autofix, composeimages, composerun, guard, hardening, patch, policy, realdocker
+from dcompose import (
+    autofix,
+    composeimages,
+    composerun,
+    guard,
+    hardening,
+    patch,
+    policy,
+    realdocker,
+    shellenv,
+)
 from dcompose.text import printable
 
 COMMANDS = {}
@@ -53,10 +64,14 @@ def audit(global_args, args):
         config, additions, problems = None, [], [str(e)]
 
     lines += hardening.describe(additions)
+    if config is not None:
+        lines += shellenv.describe(hardened, os.environ)
     if config is not None and problems:
         lines.append("the images were not looked at because of the problems above: "
                      "nothing was pulled or built")
     elif config is not None:
+        print("dcompose: pulling or building the images as `up` would, to look at the users they run as",
+              file=sys.stderr)
         with composerun.generated(global_args, project_dir) as command:
             prepared = composeimages.prepare(command(hardened), hardened, [], tools)
         problems = prepared.problems

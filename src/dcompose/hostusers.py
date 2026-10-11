@@ -17,11 +17,16 @@ class UnknownUser(UserError):
 
 
 def require_numeric(spec):
-    """`uid` or `uid:gid`, as typed; anything else is an error that says what to use instead."""
+    """`uid:gid`, as typed; anything else is an error that says what to use instead.
+
+    A uid alone would leave the group to the image: docker takes it, and the supplementary groups,
+    from the image's own passwd and group files, which can say root.
+    """
     user, colon, group = spec.partition(":")
-    if _is_id(user) and (not colon or _is_id(group)):
+    if _is_id(user) and colon and _is_id(group):
         return spec
-    raise UserError(f"--user takes a numeric id (uid or uid:gid), not {spec!r}; "
+    hint = "; give the group too, as uid:gid" if _is_id(user) and not colon else ""
+    raise UserError(f"--user takes numeric ids as uid:gid, not {spec!r}{hint}; "
                     "--as NAME runs as a local user, --as-me as yourself")
 
 

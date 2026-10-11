@@ -102,10 +102,10 @@ def test_as_with_an_unknown_account_or_an_id_is_an_error():
 
 @pytest.mark.parametrize("flags, user", [
     (["--user", "1000:1000"], "1000:1000"),
-    (["--user=0"], "0"),
-    (["-u", "7"], "7"),
-    (["-u7"], "7"),
-    (["-itu", "7"], "7"),
+    (["--user=0:0"], "0:0"),
+    (["-u", "7:8"], "7:8"),
+    (["-u7:8"], "7:8"),
+    (["-itu", "7:8"], "7:8"),
 ])
 def test_user_ids_are_passed_on_as_typed_and_recorded(flags, user):
     parsed = parse(*flags, "img")
@@ -116,14 +116,15 @@ def test_user_ids_are_passed_on_as_typed_and_recorded(flags, user):
 @pytest.mark.parametrize("flags", [
     ["--user", "alice"], ["--user=nobody"], ["-u", "root"], ["-ualice"], ["-itu", "alice"],
     ["--user", "1000:staff"], ["--user", "me"],
+    ["--user", "1000"], ["--user=0"], ["-u", "7"],  # a uid alone leaves the group to the image
 ])
 def test_user_names_are_refused_with_a_pointer_to_as(flags):
-    with pytest.raises(hostusers.UserError, match="--user takes a numeric id"):
+    with pytest.raises(hostusers.UserError, match="--user takes numeric ids as uid:gid"):
         parse(*flags, "img")
 
 
 def test_a_user_flag_in_a_cluster_keeps_its_neighbours():
-    assert parse("-itu", "7", "img").create_args == ["-it", "--user=7", "img"]
+    assert parse("-itu", "7:8", "img").create_args == ["-it", "--user=7:8", "img"]
 
 
 def test_user_flags_after_the_image_belong_to_the_command():

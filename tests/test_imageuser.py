@@ -52,9 +52,46 @@ def test_unknown_names_are_errors():
         resolve("app:ghost")
 
 
-def test_malformed_lines_are_skipped():
-    assert imageuser.parse_passwd("a:b\n:::\nx:x:one:two\n") == []
-    assert imageuser.parse_group("nogid\nx:x:y\n") == []
+# --- the parser follows moby/sys/user, where a different reading would hand an image root ---------
+
+def test_malformed_numbers_and_short_lines_read_as_zero_like_moby():
+    assert imageuser.parse_passwd("a:b\nx:x:one:two\nplus:x:+0:+0\n") == [
+        ("a", 0, 0), ("x", 0, 0), ("plus", 0, 0)]
+    assert imageuser.parse_group("nogid\nx:x:y\n") == [("nogid", 0, []), ("x", 0, [])]
+
+
+def test_an_earlier_line_that_reads_as_root_wins_over_a_later_well_formed_one():
+    passwd = "app:x\napp:x:70000:70000::/:/bin/sh\n"
+    assert imageuser.resolve("app", passwd, "")[:2] == (0, 0)
+
+
+def test_lines_are_split_on_newlines_only_and_stripped_of_whitespace():
+    # python's splitlines() would break at \x1c, \x85 and the like; moby does not
+    passwd = "junk\x1capp:x:70000:70000::/:/bin/sh\napp:x:0:0::/:/bin/sh\n"
+    assert imageuser.resolve("app", passwd, "")[:2] == (0, 0)
+    assert imageuser.resolve("app", "  app:x:0:0\t\napp:x:70000:70000\n", "")[:2] == (0, 0)
+    assert imageuser.resolve("app", "app:x:1000:1000\n", "root:x:0:app \n").supplementary == (0,)
+
+
+def test_what_go_strips_differs_from_what_python_strips():
+    # \x1c is whitespace to python's strip() but not to Go's TrimSpace
+    assert imageuser.lines("\x1cabc \x85\n\n  \n") == ["\x1cabc"]
+
+
+def test_a_numeric_spec_is_matched_by_id_only_never_by_name():
+    passwd = "1000:x:2000:2000::/:/bin/sh\napp:x:1000:1000::/:/bin/sh\n"
+    assert imageuser.resolve("1000", passwd, "")[:2] == (1000, 1000)
+    assert imageuser.resolve("app:2000", passwd, "2000:x:5:\n")[:2] == (1000, 2000)
+
+
+def test_atoi_follows_go_and_ignores_errors():
+    texts = ("12", "+7", "-3", "", "x", "1_0", "\u0663", "99999999999999999999")
+    assert [imageuser.atoi(t) for t in texts] == [12, 7, -3, 0, 0, 0, 0, 2**63 - 1]
+
+
+def test_an_image_with_a_negative_id_is_an_error():
+    with pytest.raises(ValueError):
+        imageuser.resolve("app", "app:x:-5:-5\n", "")
 
 
 def check(identity, local=None):

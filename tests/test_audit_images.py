@@ -37,6 +37,9 @@ def test_audit_pulls_and_says_what_happens_to_each_service_without_a_user(monkey
 
     captured = capsys.readouterr()
     assert "audit passed" in captured.err
+    # said before the pulling starts, on stderr so that the report on stdout stays clean
+    assert captured.err.index("pulling or building the images") < captured.err.index("audit passed")
+    assert "pulling or building" not in captured.out
     assert captured.out.splitlines() == [
         ("service db: no user set; image db:1 runs as uid 100000 (no local user), "
          "gid 100001 (no local group); accepted"),
@@ -126,3 +129,21 @@ def test_harden_reports_a_failed_pull_as_a_problem_it_cannot_fix(monkeypatch, ca
     setup(monkeypatch, tmp_path, project(web={}), FakeImages(users={}, local=set()), codes={"pull": 1})
     assert commands.harden([], []) == 1
     assert "cannot fix automatically: docker compose pull web failed" in capsys.readouterr().err
+
+
+def test_audit_does_not_announce_pulling_when_the_static_checks_fail(monkeypatch, capsys, tmp_path):
+    setup(monkeypatch, tmp_path, project(web={"privileged": True}), FakeImages())
+    commands.audit([], [])
+    assert "pulling or building" not in capsys.readouterr().err
+
+
+def test_audit_lists_the_variables_taken_from_the_shell(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("FROMSHELL", "secret")
+    config = project(web={"user": f"{UID}:{GID}", "environment": {"FROMSHELL": "secret"}})
+    setup(monkeypatch, tmp_path, config, FakeImages(users={"web:1": ""}))
+
+    commands.audit([], [])
+
+    out = capsys.readouterr().out
+    assert "service web: environment variables taken from your shell: FROMSHELL" in out
+    assert "secret" not in out

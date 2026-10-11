@@ -1,5 +1,6 @@
 import copy
 import os
+import subprocess
 
 import pytest
 from fakes import FakeImages, Local, make_tools
@@ -19,7 +20,7 @@ def project(**services):
 
 
 def prepare(config, images, args=(), active=("web",), codes=None):
-    tools, recorder = make_tools(images, active=active, codes=codes)
+    tools, recorder = make_tools(images, active=active, codes=codes, reads=lambda _: config)
     return composeimages.prepare(COMMAND, config, list(args), tools), recorder, images
 
 
@@ -98,10 +99,50 @@ def test_pulling_before_building_and_failure_stops_everything():
 
 
 def test_listing_the_services_can_fail_closed():
-    tools, _ = make_tools()
-    tools = tools._replace(capture=lambda cmd: __import__("subprocess").CompletedProcess(cmd, 1, "", "boom"))
-    prepared = composeimages.prepare(COMMAND, project(), [], tools)
+    config = project()
+    tools, _ = make_tools(reads=lambda _: config)
+    capture = tools.capture
+
+    def failing_listing(cmd):
+        if "--services" in cmd:
+            return subprocess.CompletedProcess(cmd, 1, "", "boom")
+        return capture(cmd)
+
+    prepared = composeimages.prepare(COMMAND, config, [], tools._replace(capture=failing_listing))
     assert prepared.problems == ["docker compose config --services failed"]
+
+
+# --- compose must read back what was checked ----------------------------------------
+
+def test_a_config_that_compose_reads_differently_is_refused_before_anything_is_pulled():
+    config = project(web={"pid": "${P:-host}"})
+    images = FakeImages(users={"web:1": "app"})
+
+    interpolated = {**config, "services": {"web": {**config["services"]["web"], "pid": "host"}}}
+    tools, recorder = make_tools(images, reads=lambda _: interpolated)
+    prepared = composeimages.prepare(COMMAND, config, [], tools)
+
+    assert prepared.problems == [
+        "docker compose reads the checked config differently at config.services.web.pid; not running it"]
+    assert recorder.children == [] and images.created == []
+
+
+def test_a_config_that_cannot_be_read_back_is_refused():
+    tools, _ = make_tools()
+    tools = tools._replace(capture=lambda cmd: subprocess.CompletedProcess(cmd, 1, "", "boom"))
+    prepared = composeimages.prepare(COMMAND, project(), [], tools)
+    assert prepared.problems == ["docker compose could not read back the config that was checked"]
+
+
+@pytest.mark.parametrize("expected, actual, where", [
+    ({"a": [1, {"b": 2}]}, {"a": [1, {"b": 3}]}, "config.a[1].b"),
+    ({"a": 1}, {"a": 1, "b": 2}, "config.b"),
+    ({"a": [1]}, {"a": [1, 2]}, "config.a"),
+    ({"a": 1}, {"a": True}, "config.a"),
+    ({"a": [1, "x"]}, {"a": [1, "x"]}, None),
+])
+def test_first_difference_names_the_path(expected, actual, where):
+    assert composeimages.first_difference(expected, actual) == where
 
 
 # --- deciding about the images ---------------------------------------------------
@@ -174,7 +215,7 @@ def test_root_images_run_as_nobody_and_acceptable_ones_keep_their_own_user():
 
     services = final["services"]
     assert services["web"]["user"] == NOBODY
-    assert "user" not in services["db"] and vetted == {"db"}
+    assert services["db"]["user"] == "100000:100001" and vetted == {"db"}  # pinned as numbers
     assert services["user_set"]["user"] == "7:7"
 
 
@@ -209,7 +250,8 @@ def test_the_final_config_passes_the_policy_with_exactly_the_vetted_services():
 
     assert policy.check_config(final, ctx._replace(vetted=vetted)) == []
     # without the vetting the service that kept its image's user is not acceptable
-    assert policy.check_config(final, ctx) == ["service db: user is not set, the image default may be root"]
+    assert [p for p in policy.check_config(final, ctx) if p.startswith("service db: user")] == [
+        "service db: user '100000' is neither the allowed id nor 65534 (nobody)"]
 
 
 def test_descriptions_and_notices():
@@ -296,7 +338,8 @@ def test_finalize_runs_a_mounting_service_as_nobody_in_the_generated_file():
     images = FakeImages(users={"web:1": "app", "db:1": "app"})
     _, final, vetted = decided(config, images, active=("web", "db"))
     assert final["services"]["web"]["user"] == NOBODY
-    assert "user" not in final["services"]["db"] and vetted == {"db"}  # no mounts: the image's own user stays
+    # no mounts: the image's own user stays, as numbers
+    assert final["services"]["db"]["user"] == "100000:100001" and vetted == {"db"}
 
 
 def test_the_vetting_belongs_to_dcompose_not_to_the_project():

@@ -17,9 +17,13 @@ UID, GID = os.getuid(), os.getgid()
 FAKE_DOCKER = """#!/bin/sh
 DIR=$(dirname "$0")
 printf '%s\\n' "--" "$@" >> "$DIR/calls"
+FILE=""; PREV=""
+for ARG in "$@"; do [ "$PREV" = "-f" ] && FILE="$ARG"; PREV="$ARG"; done
 case " $* " in
   *" config --services "*) echo web; exit 0 ;;
-  *" config "*) cat "$DIR/config.json"; exit 0 ;;
+  *" config "*)
+    # compose reads the generated file back; the project's own config otherwise
+    if [ -n "$FILE" ]; then cat "$FILE"; else cat "$DIR/config.json"; fi; exit 0 ;;
   *" pull "*) touch "$DIR/pulled"; exit 0 ;;
   *" build "*) exit 0 ;;
 esac
@@ -106,9 +110,10 @@ def test_up_pulls_then_runs_compose_from_the_hardened_file_and_returns_its_exit_
 
     assert cli.main(["--profile", "dev", "up", "-d"]) == 5
 
-    config_call, services_call, pull_call, up_call = compose_calls(fake_dir)
+    config_call, verify_call, services_call, pull_call, up_call = compose_calls(fake_dir)
     assert config_call[:3] == ["compose", "--profile", "dev"] and "--no-env-resolution" in config_call
     assert config_call[config_call.index("--profile", 3) + 1] == "*"  # every profile is inspected
+    assert verify_call[-4:] == ["config", "--format", "json", "--no-env-resolution"]
     assert services_call[-2:] == ["config", "--services"] and pull_call[-2:] == ["pull", "web"]
     path = (fake_dir / "file-path").read_text().strip()
     assert up_call == ["compose", "--profile", "dev", "-f", path, "--project-directory", str(work.resolve()),
@@ -125,7 +130,7 @@ def test_a_root_image_is_run_as_nobody_from_a_pinned_generated_file(project, cap
 
     assert cli.main(["up"]) == 5
 
-    assert [c[-2:] for c in compose_calls(fake_dir)][1:3] == [["config", "--services"], ["pull", "web"]]
+    assert [c[-2:] for c in compose_calls(fake_dir)][2:4] == [["config", "--services"], ["pull", "web"]]
     create = next(c for c in calls(fake_dir) if c[0] == "create")
     assert create == ["create", "--pull=never", "x:1"]  # looked at, never started
     assert any(c[0] == "rm" for c in calls(fake_dir))

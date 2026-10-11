@@ -84,8 +84,12 @@ class Recorder:
         self.captured = []
 
 
-def make_tools(images=None, active=("web",), codes=None, on_child=None):
-    """(tools, recorder). codes: exit code by compose subcommand, default 0; the last child is `up` etc."""
+def make_tools(images=None, active=("web",), codes=None, on_child=None, reads=None):
+    """(tools, recorder). codes: exit code by compose subcommand, default 0; the last child is `up` etc.
+
+    reads: changes the config `docker compose config` reports for a generated file (a compose that
+    reads it differently from what was written).
+    """
     images = images if images is not None else FakeImages()
     recorder = Recorder()
     codes = codes or {}
@@ -103,6 +107,9 @@ def make_tools(images=None, active=("web",), codes=None, on_child=None):
 
     def capture(cmd):
         recorder.captured.append(cmd)
+        if "--format" in cmd:  # config --format json: what compose makes of the generated file
+            config = read_config(cmd)
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(reads(config) if reads else config), "")
         return subprocess.CompletedProcess(cmd, 0, "\n".join(active) + "\n", "")
 
     gate_ctx = gate.Context(images, Local(), current_user=(1000, 1000))
@@ -110,7 +117,14 @@ def make_tools(images=None, active=("web",), codes=None, on_child=None):
 
 
 def read_config(cmd):
+    """The config compose would make of the file behind -f."""
+    raw = read_raw(cmd)
+    return None if raw is None else json.loads(raw)
+
+
+def read_raw(cmd):
+    """The text of the file behind -f, as written."""
     if "-f" not in cmd or not os.path.exists(cmd[cmd.index("-f") + 1]):
         return None
     with open(cmd[cmd.index("-f") + 1]) as f:
-        return json.load(f)
+        return f.read()

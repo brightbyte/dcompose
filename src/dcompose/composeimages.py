@@ -19,6 +19,7 @@ a mistake in working out what starts must fail safe.
 """
 
 import copy
+import json
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -72,6 +73,7 @@ def prepare(command, config, args, tools):
     args: the arguments after the subcommand, which name services and may carry --build or --pull.
     """
     try:
+        verify_round_trip(command, config, tools)
         to_run = services_to_run(command, config, args, tools)
         failures = acquire(command, config, to_run, args, tools)
     except ImageError as e:
@@ -85,6 +87,41 @@ def prepare(command, config, args, tools):
         for name, d in decisions.items() if d.assessment.kind == "refused"
     ]
     return Prepared(to_run, decisions, problems)
+
+
+def verify_round_trip(command, config, tools):
+    """Refuse unless compose, given the generated file, resolves it to exactly the config we checked.
+
+    Compose interpolates the files it reads; a value that comes back different would run
+    differently from what the policy saw. Done before anything is pulled or built.
+    """
+    result = tools.capture([*command, "--profile", "*", "config", "--format", "json", "--no-env-resolution"])
+    try:
+        resolved = json.loads(result.stdout) if result.returncode == 0 else None
+    except ValueError:
+        resolved = None
+    if resolved is None:
+        raise ImageError("docker compose could not read back the config that was checked")
+    where = first_difference(config, resolved)
+    if where:
+        raise ImageError(f"docker compose reads the checked config differently at {where}; not running it")
+
+
+def first_difference(expected, actual, path="config"):
+    """Where two JSON values first differ (a path), or None."""
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        for key in sorted(set(expected) | set(actual), key=str):
+            if key not in expected or key not in actual:
+                return f"{path}.{key}"
+            if where := first_difference(expected[key], actual[key], f"{path}.{key}"):
+                return where
+        return None
+    if isinstance(expected, list) and isinstance(actual, list) and len(expected) == len(actual):
+        for i, (e, a) in enumerate(zip(expected, actual)):
+            if where := first_difference(e, a, f"{path}[{i}]"):
+                return where
+        return None
+    return None if expected == actual and type(expected) is type(actual) else path
 
 
 def services_to_run(command, config, args, tools):
@@ -167,7 +204,7 @@ def decide(config, to_run, tools):
 
 
 def finalize(config, prepared):
-    """(config to run, services whose unset user is vetted). The input is left alone."""
+    """(config to run, services whose user dcompose set from the vetted image). The input is left alone."""
     final = copy.deepcopy(config)
     vetted = set()
     for name, service in final["services"].items():
@@ -178,6 +215,9 @@ def finalize(config, prepared):
         if kind in ("fallback", "not started"):
             service["user"] = gate.FALLBACK_USER
         elif kind == "ok":
+            # pinned as numbers: the runtime reads neither passwd nor group for `uid:gid`, so it cannot
+            # resolve the image's user to anything but what was checked
+            service["user"] = gate.image_user_spec(decision.assessment)
             vetted.add(name)
         if decision and kind in ("ok", "fallback"):
             service["pull_policy"] = "never"  # the image that was checked is the one that runs

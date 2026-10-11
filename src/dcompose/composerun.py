@@ -1,9 +1,12 @@
 """Running docker compose from the config we checked, not from the files it would find itself.
 
 The resolved config is hardened, checked, written to a private temporary file
+(`config` prints a literal `$` as `$$`, so compose reads the file back to the same values)
 and handed to compose as its only file, together with the project directory and
 name it came from. What was checked is then exactly what runs: no second
-reading of the project's files, no discovery rules to mirror. The price is that
+reading of the project's files, no discovery rules to mirror. composeimages.prepare
+asks compose for the config of the generated file and refuses if it differs from
+what was checked. The price is that
 compose runs as a child process (so the file can be removed afterwards) and
 shows the temporary file as its config file.
 """
@@ -17,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 
-from dcompose import composeimages, gate, guard, hardening, imageuser, policy, realdocker
+from dcompose import composeimages, gate, guard, hardening, imageuser, policy, realdocker, shellenv
 from dcompose.dockerclient import Docker
 from dcompose.text import printable
 
@@ -48,6 +51,8 @@ def run(argv, idx, tools=None):
 
     if additions:
         print(f"dcompose: {printable(hardening.summary(additions))}", file=sys.stderr)
+    for line in shellenv.describe(hardened, os.environ):
+        print(f"dcompose: {printable(line)}", file=sys.stderr)
     with generated(global_args, project_dir) as command:
         prepared = composeimages.prepare(command(hardened), hardened, args, tools)
         if not guard.report(prepared.problems):

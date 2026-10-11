@@ -31,6 +31,9 @@ def pick(env, name, default):
     return int(value)
 
 
+EXPORTED = ("UID", "GID", "DCOMPOSE_UID", "DCOMPOSE_GID")
+
+
 def export(env):
     """Set the four variables in env. Idempotent. Any UID/GID already in env is overwritten."""
     allowed_uid, allowed_gid = allowed(env)
