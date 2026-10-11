@@ -177,7 +177,13 @@ def test_refusals_say_what_to_do():
     assert len(prepared.problems) == 1  # one line per service, however many ids are the problem
     assert "service web: image web:1: the image's uid 1000 exists on this host" in prepared.problems[0]
     assert "gid 1000" in prepared.problems[0]
-    assert prepared.problems[0].endswith("set user: to choose one")
+    assert prepared.problems[0].endswith(
+        f"set user: to choose one, or give its repository a user in [image_users] in {runtime().config_file}")
+
+
+def test_a_built_image_is_not_pointed_at_image_users():
+    prepared, _, _ = prepare(project(web={"build": {"context": "."}}), FakeImages(users={"web:1": "web"}))
+    assert prepared.problems[0].endswith("; set user: to choose one")  # the config file never applies
 
 
 def test_services_with_a_user_are_not_looked_at():
@@ -290,7 +296,8 @@ def test_a_refusal_names_the_local_account_that_the_images_id_would_be():
     refused, _, _ = prepare(project(web={}), FakeImages(users={"web:1": "web"}))
     assert refused.problems == [
         ("service web: image web:1: the image's uid 1000 exists on this host (local user daniel); "
-         "the image's gid 1000 exists on this host (local group daniel); set user: to choose one")]
+         "the image's gid 1000 exists on this host (local group daniel); set user: to choose one, "
+         f"or give its repository a user in [image_users] in {runtime().config_file}")]
 
 
 # --- services with mounts ----------------------------------------------------------

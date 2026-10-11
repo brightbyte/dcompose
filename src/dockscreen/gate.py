@@ -45,6 +45,8 @@ class RunnableDocker(DockerAccess, Protocol):
 # (for example `--cap-add NET_BIND_SERVICE`).
 DEFAULTS = ["--cap-drop=ALL", "--security-opt=no-new-privileges:true"]
 CHOOSE_HINT = "pass --user UID:GID, --as NAME or --as-me to choose a user"
+IMAGE_USERS_HINT = ("or, for an image pulled from a registry, give its repository a user in [image_users] "
+                    "in {}")
 
 # Options of `docker start` and `restart` that take a value.
 VALUE_LONG = frozenset({"--detach-keys", "--checkpoint", "--checkpoint-dir", "--signal", "--time"})
@@ -104,7 +106,7 @@ def create_checked(ctx, parsed, extra):
         return code
     if assessment.refused:
         ctx.docker.remove(container)
-        return messages.refuse(explain(assessment))
+        return messages.refuse(explain(ctx, assessment))
     return container, info, assessment
 
 
@@ -162,12 +164,13 @@ def audit(ctx, args, strict=False):
         reason = f"docker could not create a container for {parsed.image}"
         return verdict.report(Verdict.FAILED, [reason], brief)
     try:
-        policy_ctx = policy.Context(ctx.runtime.cwd, ctx.ids, ctx.settings.mount_dirs)
+        policy_ctx = policy.Context(ctx.runtime.cwd, ctx.ids, ctx.settings.mount_dirs,
+                                    config_file=ctx.runtime.config_file)
         found = runpolicy.findings(info, parsed.user_given, policy_ctx) if info else []
     finally:
         ctx.docker.remove(container)
 
-    outcome, reasons = audit_verdict(assessment, found, strict)
+    outcome, reasons = audit_verdict(ctx, assessment, found, strict)
     if brief:
         print(verdict.brief(outcome, reasons))
     else:
@@ -177,9 +180,9 @@ def audit(ctx, args, strict=False):
     return int(outcome)
 
 
-def audit_verdict(assessment, found, strict):
+def audit_verdict(ctx, assessment, found, strict):
     """(verdict, reasons) of an audit: the assessment's, then the command line's findings if strict."""
-    reasons = [*(explain(assessment) if assessment.refused else []), *(found if strict else [])]
+    reasons = [*(explain(ctx, assessment) if assessment.refused else []), *(found if strict else [])]
     if assessment.failed:
         return Verdict.FAILED, reasons
     return (Verdict.REFUSED if reasons else Verdict.PASSED), reasons
@@ -197,6 +200,7 @@ def report_assessment(ctx, image, assessment):
     if assessment.refused:
         if not assessment.failed:
             print(f"  {CHOOSE_HINT}")
+            print(f"  {IMAGE_USERS_HINT.format(ctx.runtime.config_file)}")
         return
     if assessment.pins_user:
         print(f"  docker run would create it again with --user={pinned_user(ctx, assessment)}, as numbers")
@@ -257,7 +261,7 @@ def check_existing(ctx, args):
                 problems.append(f"{ref}: its image's user would be replaced by {user}, which an existing "
                                 f"container cannot be; recreate it with --user {user}")
             else:
-                problems += [f"{ref}: {p}" for p in explain(assessment)]
+                problems += [f"{ref}: {p}" for p in explain(ctx, assessment)]
         except (DockerError, ValueError, KeyError) as e:
             problems.append(f"{ref}: {e}")
     return problems
@@ -273,8 +277,9 @@ def verify_split(info, parsed):
     return []
 
 
-def explain(assessment):
+def explain(ctx, assessment):
     """The problems, with how to get past them when they come from the image's own identity."""
     if assessment.identity is None:
         return assessment.problems
-    return [f"{p}; {CHOOSE_HINT}" for p in assessment.problems]
+    hint = f"{CHOOSE_HINT}, {IMAGE_USERS_HINT.format(ctx.runtime.config_file)}"
+    return [f"{p}; {hint}" for p in assessment.problems]

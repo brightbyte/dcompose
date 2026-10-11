@@ -245,6 +245,14 @@ def test_selinux_relabel_does_not_allow_a_bind_mount_outside_the_project(project
     assert_refused(problems_for(project, volumes=[mount]), "bind mount '/etc' is outside")
 
 
+def test_a_mount_outside_says_how_the_config_file_can_allow_it(project):
+    config_file = "/home/me/.config/dockscreen/config.toml"
+    ctx = policy.Context(str(project), rules(allow_me=True), config_file=config_file)
+    assert policy.check_mounts([bind("/srv/data")], ctx) == [
+        f"bind mount '/srv/data' is outside {project}; to allow it, add a directory that contains it to "
+        "mount_dirs in /home/me/.config/dockscreen/config.toml"]
+
+
 def test_bind_mount_outside_project_is_refused(project):
     assert_refused(problems_for(project, volumes=[bind("/var/run/docker.sock")]),
                    "bind mount '/var/run/docker.sock' is outside")

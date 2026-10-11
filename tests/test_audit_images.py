@@ -103,7 +103,8 @@ def test_brief_prints_only_the_verdict(monkeypatch, capsys, tmp_path):
     captured = capsys.readouterr()
     assert captured.out == ("\u274c refused: service db: image db:1: the image's uid 1000 exists on this "
                             "host (local user daniel); the image's gid 1000 exists on this host "
-                            "(local group daniel); set user: to choose one\n")
+                            "(local group daniel); set user: to choose one, or give its repository a "
+                            f"user in [image_users] in {runtime().config_file}\n")
     assert captured.err == ""
 
 

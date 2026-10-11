@@ -46,6 +46,7 @@ class Decision(NamedTuple):
     image: str
     assessment: imagedecision.Assessment
     image_id: str | None = None  # what the image name was when it was looked at
+    built: bool = False          # the service builds the image, so [image_users] never applies
 
 
 class Prepared(NamedTuple):
@@ -81,14 +82,23 @@ def prepare(command, config, args, tools, chosen=frozenset()):
         return Prepared(to_run, {}, failures, failed=True)
 
     decisions = decide(config, to_run - chosen, tools)
-    problems = [decision_problem(name, d) for name, d in decisions.items() if d.assessment.refused]
+    config_file = tools.gate_ctx.runtime.config_file
+    problems = [decision_problem(name, d, config_file)
+                for name, d in decisions.items() if d.assessment.refused]
     return Prepared(to_run, decisions, problems, failed=any(d.assessment.failed for d in decisions.values()))
 
 
-def decision_problem(name, decision):
-    """Why the service must not run, for a decision that refused or failed."""
+def decision_problem(name, decision, config_file=None):
+    """Why the service must not run, for a decision that refused or failed.
+
+    config_file: named in the hint for an image that is pulled, whose repository can be given a user.
+    """
     text = f"service {name}: image {decision.image}: {'; '.join(decision.assessment.problems)}"
-    return text if decision.assessment.failed else f"{text}; set user: to choose one"
+    if decision.assessment.failed:
+        return text
+    if decision.built or not config_file:
+        return f"{text}; set user: to choose one"
+    return f"{text}; set user: to choose one, or give its repository a user in [image_users] in {config_file}"
 
 
 def verify_round_trip(command, config, tools):
@@ -193,7 +203,7 @@ def decide(config, to_run, tools):
                 assessment = imagedecision.Assessment(imagedecision.Kind.FAILED, [str(e)])
             finally:
                 tools.gate_ctx.docker.remove(container)
-        decisions[name] = Decision(image, assessment, image_id)
+        decisions[name] = Decision(image, assessment, image_id, built="build" in service)
     return decisions
 
 

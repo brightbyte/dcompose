@@ -487,6 +487,14 @@ def test_audit_predicts_a_refusal_and_exits_one(capsys):
     assert ("image img: would be refused (runs as uid 1000 (local user daniel), "
             "gid 1000 (local group daniel)): the image's uid 1000 exists on this host "
             "(local user daniel)") in out
+    # how to get past it: on the command line, or once for the repository in the config file
+    assert "  pass --user UID:GID, --as NAME or --as-me to choose a user" in out
+    assert f"give its repository a user in [image_users] in {runtime().config_file}" in out
+
+
+def test_run_refusals_name_the_config_file(capsys):
+    assert gate.run(ctx(FakeDocker(image_user="web")), ["img"]) == 1
+    assert f"[image_users] in {runtime().config_file}" in capsys.readouterr().err
 
 
 def test_audit_takes_allow_me(capsys):
@@ -526,7 +534,8 @@ def test_audit_points_out_what_a_project_could_not_ask_for(monkeypatch, tmp_path
         f"{WARN} command line: privileged is not allowed",
         f"{WARN} command line: cap_add is not allowed",
         f"{WARN} command line: pid: host shares a namespace outside the project",
-        f"{WARN} command line: bind mount '/etc' is outside {tmp_path}",
+        f"{WARN} command line: bind mount '/etc' is outside {tmp_path}; to allow it, add a directory that "
+        f"contains it to mount_dirs in {runtime().config_file}",
     ]  # the mount inside the current directory and the named volume are fine
 
 
@@ -558,7 +567,9 @@ def test_audit_without_docker_fails(capsys):
     (["--brief", "img"], "\u2705 passed\n", 0),
     (["-v", "/p:/p", "--brief", "img"],
      "\u274c refused: the image's uid 100000 is not in the nobody range 65530-65534, "
-     "and there are host mounts; pass --user UID:GID, --as NAME or --as-me to choose a user (+1 more)\n", 1),
+     "and there are host mounts; pass --user UID:GID, --as NAME or --as-me to choose a user, or, for an "
+     f"image pulled from a registry, give its repository a user in [image_users] in {runtime().config_file} "
+     "(+1 more)\n", 1),
 ])
 def test_brief_prints_only_the_verdict(args, out, code, capsys):
     docker = FakeDocker(image_user="app", info_extra=BIND if "-v" in args else None)

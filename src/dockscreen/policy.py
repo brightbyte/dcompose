@@ -98,6 +98,8 @@ class Context(NamedTuple):
     vetted: frozenset = frozenset()
     # Whether the service being checked reaches host files (has_host_mounts); set per service.
     mounts: bool = False
+    # The caller's config file, named in hints on what it can allow; no hints without it.
+    config_file: str | None = None
 
     @property
     def mount_roots(self):
@@ -254,8 +256,7 @@ def check_mounts(value, ctx):
         kind = mount.get("type")
         if kind == "bind":
             if not is_inside_any(mount.get("source", ""), ctx.mount_roots):
-                problems.append(
-                    f"bind mount {mount.get('source')!r} is outside {roots_text(ctx.mount_roots)}")
+                problems.append(outside(f"bind mount {mount.get('source')!r}", ctx))
         elif kind not in ("volume", "tmpfs", "image"):
             problems.append(f"mount type {kind!r} is not allowed")
     return problems
@@ -397,7 +398,7 @@ def check_driver_opts(opts, ctx):
     if not os.path.isabs(device):
         return [f"device {device!r} must be an absolute path"]
     if not is_inside_any(device, ctx.mount_roots):
-        return [f"device {device!r} is outside {roots_text(ctx.mount_roots)}"]
+        return [outside(f"device {device!r}", ctx)]
     return []
 
 
@@ -438,6 +439,14 @@ def check_file_source(item, ctx):
 
 
 # --- paths ----------------------------------------------------------------
+
+def outside(subject, ctx):
+    """`subject is outside` the mount roots, with how the config file can allow it."""
+    text = f"{subject} is outside {roots_text(ctx.mount_roots)}"
+    if ctx.config_file:
+        text += f"; to allow it, add a directory that contains it to mount_dirs in {ctx.config_file}"
+    return text
+
 
 def roots_text(mount_roots):
     project_dir, *extra = mount_roots

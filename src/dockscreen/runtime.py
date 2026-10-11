@@ -27,6 +27,11 @@ class Runtime(NamedTuple):
         return idrules.Rules(self.me, allow_me, self.settings.nobody_range, self.settings.default_user,
                              self.accounts, self.subordinate)
 
+    @property
+    def config_file(self):
+        """The caller's own config file, which hints point to; dockscreen creates it if it is missing."""
+        return config.user_file(self.env, self.home)
+
     def resolve_account(self, name):
         """hostusers.resolve_account with this host's accounts."""
         return hostusers.resolve_account(name, self.accounts)

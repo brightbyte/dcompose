@@ -72,6 +72,8 @@ docker = "/usr/bin/docker"         # the real docker, if not the next one on PAT
 "mariadb" = "999:999"
 ```
 
+When dockscreen refuses something the config file could allow (a bind mount outside the project, an image's own user), the message names the setting and your config file.
+
 An `image_users` entry names a repository, without tag: it trusts the image's maintainer. It applies only to an image that docker records as pulled from that repository, and never to a service that builds its image, because anything can be tagged locally under any name.
 
 A `mount_dirs` entry that contains your home directory, a system directory, the config file or the docker socket gets a warning on every run. A project directory that contains one of them is refused, and the search for a compose file stops at your home directory and at the first directory that is not yours.

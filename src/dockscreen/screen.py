@@ -47,14 +47,14 @@ def check(global_args, runtime, rules=policy.check_config):
 
 def context(project_dir, runtime, allow_me=False):
     """The policy context for project_dir, from the config file; allow_me: --allow-me was given."""
-    return policy.Context(project_dir, runtime.rules(allow_me), runtime.settings.mount_dirs)
+    return policy.Context(project_dir, runtime.rules(allow_me), runtime.settings.mount_dirs,
+                          config_file=runtime.config_file)
 
 
 def sensitive_paths(runtime):
     """Paths whose directories must not be mountable: system directories, the home directory, the
     config files and the docker socket."""
-    user_file = config.user_file(runtime.env, runtime.home)
-    return [*SENSITIVE_DIRS, runtime.home, config.SYSTEM_FILE, user_file, DOCKER_SOCKET]
+    return [*SENSITIVE_DIRS, runtime.home, config.SYSTEM_FILE, runtime.config_file, DOCKER_SOCKET]
 
 
 def sensitive_inside(directory, runtime):
