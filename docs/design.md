@@ -133,7 +133,7 @@ An `[image_users]` entry names a repository: it trusts the image's maintainer, n
 
 ## Mechanisms
 
-### Compose (`cli`, `screen`, `hardening`, `policy`, `composeimages`, `composerun`)
+### Compose (`compose_cli`, `screen`, `hardening`, `policy`, `composeimages`, `composerun`)
 
 For `up`, `create`, `run`, `watch`, `scale` and `alpha`:
 
@@ -248,4 +248,4 @@ Text from the project or the image is escaped (`text.printable`) before it is pr
 ## Maintaining
 
 - A legitimate key is refused: check that it can't reach the host, then add it to the matching list in `policy.py`, or give it a check function. Never switch to refusing only known-bad keys.
-- Compose adds a global option that takes a value: add it to `cli.GLOBAL_OPTS_WITH_VALUE`, or the subcommand is misread. For `docker`, the list is `docker_cli.DOCKER_OPTS_WITH_VALUE`, and for `run`/`create` it is `runargs.LONG_VALUE_FLAGS`.
+- Compose adds a global option that takes a value: add it to `compose_cli.GLOBAL_OPTS_WITH_VALUE`, or the subcommand is misread. For `docker`, the list is `docker_cli.DOCKER_OPTS_WITH_VALUE`, and for `run`/`create` it is `runargs.LONG_VALUE_FLAGS`.

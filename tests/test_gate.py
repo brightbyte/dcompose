@@ -364,7 +364,7 @@ def test_existing_containers_are_checked_by_the_same_rule():
 def routed(monkeypatch):
     calls = []
     monkeypatch.setattr(docker_cli, "passthrough", lambda argv: calls.append(("exec", argv)) or 0)
-    monkeypatch.setattr(docker_cli.cli, "main", lambda argv: calls.append(("compose", argv)) or 0)
+    monkeypatch.setattr(docker_cli.compose_cli, "main", lambda argv: calls.append(("compose", argv)) or 0)
     monkeypatch.setattr(docker_cli, "Docker", lambda: FakeDocker(image_user="app"))
     monkeypatch.setattr(docker_cli.imageuser, "LocalIds", Local)
     return calls

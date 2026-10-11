@@ -2,12 +2,12 @@ import os
 
 import pytest
 
-from dockscreen import cli
+from dockscreen import compose_cli
 
 
 @pytest.fixture(autouse=True)
 def isolated_environ(monkeypatch):
-    """cli.main exports UID/GID into os.environ; keep that from leaking between tests."""
+    """compose_cli.main exports UID/GID into os.environ; keep that from leaking between tests."""
     monkeypatch.setattr(os, "environ", dict(os.environ))
 
 
@@ -20,9 +20,9 @@ def local_daemon(monkeypatch):
 
 @pytest.fixture
 def forwarded(monkeypatch):
-    """The argv lists cli.main would have handed to docker compose."""
+    """The argv lists compose_cli.main would have handed to docker compose."""
     calls = []
-    monkeypatch.setattr(cli, "forward", calls.append)
+    monkeypatch.setattr(compose_cli, "forward", calls.append)
     return calls
 
 

@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from dockscreen import cli, ids
+from dockscreen import compose_cli, ids
 
 
 def test_export_sets_the_real_ids_and_is_idempotent():
@@ -16,10 +16,10 @@ def test_export_sets_the_real_ids_and_is_idempotent():
 
 
 def test_main_exports_ids_for_compose_interpolation(monkeypatch):
-    monkeypatch.setattr(cli, "forward", lambda argv: None)
+    monkeypatch.setattr(compose_cli, "forward", lambda argv: None)
     monkeypatch.setenv("UID", "7")
 
-    cli.main(["ps"])
+    compose_cli.main(["ps"])
 
     assert os.environ["UID"] == str(os.getuid())
 

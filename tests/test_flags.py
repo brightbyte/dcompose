@@ -1,6 +1,6 @@
 import pytest
 
-from dockscreen import cli, docker_cli, flags
+from dockscreen import compose_cli, docker_cli, flags
 
 FLAG = "--skip-screening"
 
@@ -16,7 +16,7 @@ FLAG = "--skip-screening"
     ([], False, []),
 ])
 def test_only_a_global_option_counts(argv, found, rest):
-    assert flags.strip(argv, cli.GLOBAL_OPTS_WITH_VALUE) == (found, rest)
+    assert flags.strip(argv, compose_cli.GLOBAL_OPTS_WITH_VALUE) == (found, rest)
 
 
 def test_banner_goes_to_stderr(capsys):
@@ -27,17 +27,17 @@ def test_banner_goes_to_stderr(capsys):
 
 
 def test_dockscreen_with_the_flag_is_plain_compose_with_a_warning(forwarded, monkeypatch, capsys):
-    monkeypatch.setattr(cli.composerun, "run", lambda argv, idx: 1 / 0)
-    monkeypatch.setattr(cli.screen, "passes", lambda *a: 1 / 0)
+    monkeypatch.setattr(compose_cli.composerun, "run", lambda argv, idx: 1 / 0)
+    monkeypatch.setattr(compose_cli.screen, "passes", lambda *a: 1 / 0)
 
-    cli.main([FLAG, "-f", "a.yml", "up", "-d"])
+    compose_cli.main([FLAG, "-f", "a.yml", "up", "-d"])
 
     assert forwarded == [["-f", "a.yml", "up", "-d"]]
     assert "screening is disabled" in capsys.readouterr().err
 
 
 def test_dockscreen_flag_also_skips_the_extra_subcommands(forwarded):
-    cli.main([FLAG, "audit"])
+    compose_cli.main([FLAG, "audit"])
     assert forwarded == [["audit"]]  # compose gets it unchanged; nothing of ours runs
 
 
@@ -49,7 +49,7 @@ def test_dockscreen_flag_also_skips_the_extra_subcommands(forwarded):
 def test_docker_with_the_flag_is_plain_docker_with_a_warning(monkeypatch, capsys, argv, expected):
     calls = []
     monkeypatch.setattr(docker_cli, "passthrough", lambda a: calls.append(a) or 0)
-    monkeypatch.setattr(docker_cli.cli, "main", lambda a: 1 / 0)
+    monkeypatch.setattr(docker_cli.compose_cli, "main", lambda a: 1 / 0)
 
     docker_cli.main(argv)
 

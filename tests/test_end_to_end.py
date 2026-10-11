@@ -9,7 +9,7 @@ import fakes
 import pytest
 from fakes import PASSWD
 
-from dockscreen import cli, composerun, realdocker
+from dockscreen import compose_cli, composerun, realdocker
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -109,7 +109,7 @@ def compose_calls(fake_dir):
 def test_up_pulls_then_runs_compose_from_the_hardened_file_and_returns_its_exit_code(project, capsys):
     fake_dir, work, _ = project
 
-    assert cli.main(["--profile", "dev", "up", "-d"]) == 5
+    assert compose_cli.main(["--profile", "dev", "up", "-d"]) == 5
 
     config_call, verify_call, services_call, pull_call, up_call = compose_calls(fake_dir)
     assert config_call[:3] == ["compose", "--profile", "dev"] and "--no-env-resolution" in config_call
@@ -129,7 +129,7 @@ def test_a_root_image_is_run_as_the_default_user_from_a_pinned_generated_file(pr
     fake_dir, _, configure = project
     configure(pull_policy="always")  # no user: the image decides
 
-    assert cli.main(["up"]) == 5
+    assert compose_cli.main(["up"]) == 5
 
     assert [c[-2:] for c in compose_calls(fake_dir)][2:4] == [["config", "--services"], ["pull", "web"]]
     create = next(c for c in calls(fake_dir) if c[0] == "create")
@@ -146,7 +146,7 @@ def test_an_image_that_chose_a_low_user_is_refused_and_nothing_starts(project, c
     configure()
     set_image_user(fake_dir, "web")  # uid 1000 in the passwd above, and the fake host has it
 
-    assert cli.main(["up"]) == 1
+    assert compose_cli.main(["up"]) == 1
 
     assert not (fake_dir / "file-read").exists()  # compose never ran on the project
     err = capsys.readouterr().err
@@ -158,7 +158,7 @@ def test_a_refused_project_never_starts_compose(project, capsys):
     (fake_dir / "config.json").write_text(json.dumps(
         {"name": "proj", "services": {"web": {"image": "x", "user": "0:0", "privileged": True}}}))
 
-    assert cli.main(["up"]) == 1
+    assert compose_cli.main(["up"]) == 1
 
     # only the config call and the look at the daemon's context: nothing was pulled either
     assert [c[0] for c in calls(fake_dir)] == ["compose", "context"]

@@ -9,7 +9,7 @@ import sys
 
 from dockscreen import (
     argscan,
-    cli,
+    compose_cli,
     config,
     flags,
     gate,
@@ -56,7 +56,7 @@ def dispatch(argv):
         if idx != 0:
             messages.notice("docker options before `compose` are not supported")
             return 1
-        return cli.main([*([flags.ALLOW_ME] if allow_me else []), *argv[1:]])
+        return compose_cli.main([*([flags.ALLOW_ME] if allow_me else []), *argv[1:]])
 
     sub, end = argv[idx], idx
     if sub == "container" and idx + 1 < len(argv) and argv[idx + 1] in GATED - {"audit"}:
@@ -82,7 +82,7 @@ def gated(argv, sub, idx, end, allow_me=False):
             return messages.refuse([str(e)])
         return passthrough([*lead, *gate.DEFAULTS, *resolved])
     if sub == "exec":
-        resolved = cli.rewrite_exec("docker exec", args)
+        resolved = compose_cli.rewrite_exec("docker exec", args)
         return 1 if resolved is None else passthrough([*lead, *resolved])
 
     docker = Docker()
