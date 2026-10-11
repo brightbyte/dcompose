@@ -123,13 +123,16 @@ def harden(global_args, args, runtime, allow_me=False):
 
     base, static = project.hardened, project.static_ctx()
     fixed = autofix.fix_config(base, static)
-    remaining = policy.check_config(autofix.resolve_user_template(fixed, static), static)
+    # what the patch runs as, with ${UID}:${GID} as compose would read it; compose interpolates the
+    # generated file too, so a literal ${UID} there would read back differently from what was checked
+    resolved = autofix.resolve_user_template(fixed, static)
+    remaining = policy.check_config(resolved, static)
     notes = [hardening.defaults_note()]
     if remaining:
         messages.notice("the images were not looked at because of the problems below: "
                         "nothing was pulled or built")
     else:
-        remaining, notes = fix_image_users(project, fixed, notes)
+        remaining, notes = fix_image_users(project, fixed, resolved, notes)
 
     sys.stdout.write(patch.render(base, fixed, remaining, notes=notes))
     for problem in remaining:
@@ -137,10 +140,14 @@ def harden(global_args, args, runtime, allow_me=False):
     return 1 if remaining else 0
 
 
-def fix_image_users(project, fixed, notes):
-    """Set a user on the services whose image chose one that is not acceptable. (problems left, notes)."""
+def fix_image_users(project, fixed, resolved, notes):
+    """Set a user in fixed on the services whose image chose one that is not acceptable.
+    (problems left, notes)
+
+    resolved: fixed as it will run, which is what the images are looked at with.
+    """
     with project.generated() as command:
-        prepared = composeimages.prepare(command(fixed), fixed, [], project.tools)
+        prepared = composeimages.prepare(command(resolved), resolved, [], project.tools)
     if not prepared.decisions:
         return prepared.problems, notes  # nothing could be looked at: pulling or building failed
     remaining = []

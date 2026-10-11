@@ -1,4 +1,5 @@
 """`audit` and `harden` pull and build as `up` would, then say what happens to services without a user."""
+import json
 import os
 
 from fakes import FakeImages, install_tools, make_tools, runtime
@@ -151,6 +152,26 @@ def test_harden_sets_a_user_where_the_image_chose_one_that_is_not_acceptable(mon
     assert '"web":' in body and '    user: "${UID}:${GID}"' in body
     assert "dockscreen allows that only with --allow-me" in out
     assert '"db"' not in body  # its image's own user was fine
+
+
+def test_harden_looks_at_the_images_with_the_users_it_writes_resolved(monkeypatch, capsys, tmp_path):
+    # db sets a user the rules refuse with its mounts; harden gives it ${UID}:${GID}, which compose
+    # interpolates when it reads the generated file back, like any other value
+    config = project(web={}, db={"user": "900:900", "volumes": [
+        {"type": "bind", "source": str(tmp_path / "data"), "target": "/data"}]})
+
+    def interpolating(read):
+        db = read["services"]["db"]
+        return json.loads(json.dumps(read).replace("${UID}", str(UID)).replace("${GID}", str(GID))) \
+            if db.get("user") == "${UID}:${GID}" else read
+
+    setup(monkeypatch, tmp_path, config, FakeImages(users={"web:1": "app", "db:1": "app"}),
+          active=("web", "db"), reads=interpolating)
+
+    assert commands.harden([], [], runtime()) == 0
+    captured = capsys.readouterr()
+    assert '    user: "${UID}:${GID}"' in captured.out
+    assert "reads the checked config differently" not in captured.out + captured.err
 
 
 def test_harden_does_not_pull_or_build_while_other_problems_remain(monkeypatch, capsys, tmp_path):
