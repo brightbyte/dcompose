@@ -3,7 +3,9 @@
 # Keep this file and its directories writable by you only, or dockscreen refuses to run.
 
 # The user an image runs as when neither the service nor the command line chooses one, as numeric
-# "uid:gid". Not set: the image's own user, if the id rules accept it.
+# "uid:gid". Not set: the image's own user, if the id rules accept it. Its uid and gid also become
+# allowed ids: a service may then name them itself, mounts or not. Set here, that holds for every
+# service of every project; in an image or project section, only there.
 #user = "1000:1000"
 
 # The user that replaces an image's root user, as numeric "uid:gid".

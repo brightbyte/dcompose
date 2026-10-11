@@ -361,3 +361,23 @@ def test_a_project_section_applies_to_its_directory(monkeypatch, tmp_path, capsy
     elsewhere = config.Config(projects={"/elsewhere": config.Section(mount_dirs=("/srv/x",))})
     tools, _ = sectioned(elsewhere, FakeImages(users={"x:1": "app"}))
     assert composerun.run(["up"], 0, runtime(settings=elsewhere), tools) == 1
+
+
+X_USER = config.Config(images={"docker.io/library/x": config.Section(user=(900, 900))})
+X_DATA = {"volumes": [{"type": "bind", "source": "/p/data", "target": "/data"}]}  # inside the project: /p
+
+
+def test_a_service_may_name_the_user_its_image_section_sets(monkeypatch, capsys):
+    inspect_as(monkeypatch, "/p", project_config(user="900:900", **X_DATA))
+    tools, recorder = sectioned(X_USER, FakeImages(users={"x:1": "app"}, digests={"x:1": ["x@sha256:a"]}))
+
+    assert composerun.run(["up"], 0, runtime(settings=X_USER), tools) == 0
+    assert last(recorder)[1]["services"]["web"]["user"] == "900:900"
+
+
+def test_the_user_an_image_section_sets_needs_the_image_to_prove_it(monkeypatch, capsys):
+    inspect_as(monkeypatch, "/p", project_config(user="900:900", **X_DATA))
+    tools, recorder = sectioned(X_USER, FakeImages(users={"x:1": "app"}))  # no digest: tagged locally
+
+    assert composerun.run(["up"], 0, runtime(settings=X_USER), tools) == 1
+    assert "user '900:900': uid 900 is not in the nobody range" in capsys.readouterr().err

@@ -764,3 +764,11 @@ def test_an_image_sections_security_opts_apply_to_what_audit_points_out(digests,
     audit_with(docker, settings, "img")
     out = capsys.readouterr().out
     assert [line[2:] for line in out.splitlines() if "command line:" in line] == findings
+
+
+def test_audit_does_not_point_out_a_user_the_config_file_sets_for_the_image(capsys):
+    settings = config.Config(images={"docker.io/library/img": config.Section(user=(900, 900))})
+    docker = FakeDocker(image_user="", container_user="900:900", repo_digests=["img@sha256:abc"],
+                        info_extra=BIND)  # with mounts, 900 is only allowed because the config says so
+    assert audit_with(docker, settings, "--user", "900:900", "-v", "/p:/p", "img") == 0
+    assert "command line: user" not in capsys.readouterr().out

@@ -101,6 +101,9 @@ class Context(NamedTuple):
     # The caller's config file, named in hints on what it can allow; no hints without it.
     config_file: str | None = None
     security_opts: tuple = ()  # allowed besides no-new-privileges (security_opts in the config file)
+    # The user the config file sets for this service (its image's or project's, or the top level's):
+    # its uid and gid are allowed ids for the service too, whoever names them.
+    configured_user: tuple | None = None
     # (name, service) -> this context for that service, with the settings of its image section if one
     # applies; None if every service gets this one.
     scope: object = None
@@ -188,7 +191,8 @@ def check_user(value, ctx):
         return [f"user {value!r} has no group, use uid:gid"]
     if gid is None:
         return [not_a_name("group", group)]
-    return [f"user {value!r}: {p}" for p in ctx.ids.problems(uid, gid, mounts=ctx.mounts)]
+    return [f"user {value!r}: {p}"
+            for p in ctx.ids.problems(uid, gid, mounts=ctx.mounts, extra=configured_ids(ctx))]
 
 
 def check_group_add(value, ctx):
@@ -197,7 +201,7 @@ def check_group_add(value, ctx):
         gid = ids.parse_id(extra)
         if gid is None:
             problems.append(not_a_name("group_add", extra))
-        elif problem := ctx.ids.problem("gid", gid, ctx.mounts):
+        elif problem := ctx.ids.problem("gid", gid, ctx.mounts, configured_ids(ctx)):
             problems.append(f"group_add {extra!r}: {problem}")
     return problems
 
@@ -207,6 +211,11 @@ SELINUX_HINT = "; if bind mounts fail on SELinux, add the :z or :Z mount option 
 
 def is_selinux_label(option):
     return option.startswith(("label=", "label:"))
+
+
+def configured_ids(ctx):
+    """The configured user, as further allowed (uid, gid) pairs for the id rules."""
+    return (ctx.configured_user,) if ctx.configured_user else ()
 
 
 def check_security_opt(value, ctx):

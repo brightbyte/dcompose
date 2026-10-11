@@ -245,6 +245,17 @@ def test_selinux_relabel_does_not_allow_a_bind_mount_outside_the_project(project
     assert_refused(problems_for(project, volumes=[mount]), "bind mount '/etc' is outside")
 
 
+def test_the_configured_user_is_allowed_for_the_service_with_mounts(project):
+    ctx = policy.Context(str(project), rules(), mounts=True)
+    assert policy.check_user("900:900", ctx)  # refused: not in the nobody range, and there are mounts
+    configured = ctx._replace(configured_user=(900, 900))
+    assert policy.check_user("900:900", configured) == []
+    assert policy.check_user("900:65534", configured) == []  # each id on its own, as for the nobody range
+    assert policy.check_group_add(["900"], configured) == []
+    assert policy.check_user("901:900", configured) == ["user '901:900': uid 901 is not in the nobody range "
+                                                        "65530-65534, and there are host mounts"]
+
+
 def test_security_opts_from_the_config_file_are_allowed_too(project):
     ctx = policy.Context(str(project), rules(), security_opts=("seccomp=/etc/strict.json",))
     assert policy.check_security_opt(["no-new-privileges:true", "seccomp=/etc/strict.json"], ctx) == []

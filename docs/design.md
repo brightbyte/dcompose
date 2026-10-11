@@ -54,7 +54,7 @@ Who a container runs as is the decision dockscreen spends most of its effort on.
 - **nobody range**: ids any project or image may use, mounts or not. `nobody_range`, 65530–65534 by default.
 - **default user**: what replaces an image's root user. `default_user`, 65534:65534 by default.
 - **configured user**: a `uid:gid` that `user` sets in the config file, at the top level or in the image's or project's section.
-- **allowed ids**: the nobody range, the default user, the configured image user that applies, and me when `--allow-me` was given (`--as-me` implies it for `docker run`).
+- **allowed ids**: the nobody range, the default user, the uid and the gid of the configured user that applies to the service, and me when `--allow-me` was given (`--as-me` implies it for `docker run`). Each id is allowed on its own: with a configured `900:900`, `900:65534` passes too. A top-level `user` makes its ids allowed for every service of every project.
 - **host mounts**: bind mounts, devices, `volumes_from`, secrets and configs. Named volumes and tmpfs are not.
 
 ### Forms
@@ -251,7 +251,6 @@ Text from the project or the image is escaped (`text.printable`) before it is pr
 ## Known gaps
 
 - Compose `start` and `restart` are passed through unchecked. A container that plain `docker compose create` made, without dockscreen, can be started through them.
-- An explicit `user:` is checked without the configured image user: a service that sets `user: "999:999"` for an image configured as 999 is still judged by the id rules alone. Leaving `user:` out gives the configured user.
 - Image sections cannot apply to a locally built image; pinning by digest is a [future idea](../FUTURE.md).
 - `harden` writes `user: "${UID}:${GID}"` where an image's user is refused, which needs `--allow-me` to run.
 

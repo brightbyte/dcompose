@@ -175,7 +175,8 @@ def audit(ctx, args, strict=False):
     try:
         settings, rules = ctx.for_image(assessment.section)
         policy_ctx = policy.Context(ctx.directory, rules, settings.mount_dirs,
-                                    config_file=ctx.runtime.config_file, security_opts=settings.security_opts)
+                                    config_file=ctx.runtime.config_file, security_opts=settings.security_opts,
+                                    configured_user=settings.user)
         found = runpolicy.findings(info, parsed.user_given, policy_ctx) if info else []
     finally:
         ctx.docker.remove(container)

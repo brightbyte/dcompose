@@ -174,6 +174,22 @@ def test_harden_looks_at_the_images_with_the_users_it_writes_resolved(monkeypatc
     assert "reads the checked config differently" not in captured.out + captured.err
 
 
+def test_harden_leaves_a_user_the_config_file_sets_for_the_image(monkeypatch, capsys, tmp_path):
+    from fakes import rules
+
+    from dockscreen import config as configuration
+    from dockscreen import imagedecision
+    settings = configuration.Config(images={"docker.io/library/db": configuration.Section(user=(900, 900))})
+    config = project(db={"user": "900:900", "volumes": [
+        {"type": "bind", "source": str(tmp_path / "data"), "target": "/data"}]})
+    images = FakeImages(users={"db:1": "app"}, digests={"db:1": ["db@sha256:x"]})
+    setup(monkeypatch, tmp_path, config, images, active=("db",),
+          gate_ctx=imagedecision.Context(images, rules(), runtime(settings=settings)))
+
+    assert commands.harden([], [], runtime(settings=settings)) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "services: {}"  # nothing to fix
+
+
 def test_harden_does_not_pull_or_build_while_other_problems_remain(monkeypatch, capsys, tmp_path):
     config = project(web={"build": {"context": "/"}})  # a build context outside the project: no safe fix
     recorder = setup(monkeypatch, tmp_path, config, FakeImages(users={"web:1": ""}))

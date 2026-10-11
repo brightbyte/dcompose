@@ -30,7 +30,7 @@ Containers don't run as root or as you unless you say so.
 - A project or an image may not pick root, an id of a local account, an id from `/etc/subuid` or `/etc/subgid`, or 65535 and 4294967295. That applies to the uid, the gid and supplementary groups.
 - With host mounts (bind mounts, devices, `volumes_from`, secrets, configs), the id must be in the nobody range (65530–65534 unless configured), the default user, a user configured for the image, or you with `--allow-me`.
 - To run services as yourself: `dockscreen --allow-me compose up`, with `user: "${UID}:${GID}"` on those services. dockscreen sets `UID` and `GID` to your real ids.
-- To give an image a user of its own, such as mariadb's 999, set `user` in its section of the config file, `[images."mariadb"]`.
+- To give an image a user of its own, such as mariadb's 999, set `user` in its section of the config file, `[images."mariadb"]`. A service of that image may then also name 999 in `user:` or `group_add` itself, with mounts too. A `user` at the top level of the config file does the same for every service of every project: with your own ids there, that is `--allow-me` everywhere.
 - Names in `user:` and `--as` are resolved on this host, not in the image. A name unknown here is refused, and so is a uid without a group.
 
 The full rules are in [docs/design.md](docs/design.md#users-and-groups).
