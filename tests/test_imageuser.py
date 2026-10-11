@@ -113,9 +113,3 @@ def test_describe_with_the_local_accounts_says_who_the_ids_are():
         "supplementary gids 999 (local group docker), 4242 (no local group)")
     assert imageuser.describe(imageuser.Identity(100000, 100001, ()), local) == (
         "uid 100000 (no local user), gid 100001 (no local group)")
-
-
-def test_local_ids_use_nss():
-    local = imageuser.LocalIds()
-    assert local.user_name(0) == "root" and local.group_name(0) == "root"
-    assert local.user_name(2**31 - 3) is None and local.group_name(2**31 - 3) is None

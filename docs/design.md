@@ -138,7 +138,7 @@ An `[image_users]` entry names a repository: it trusts the image's maintainer, n
 For `up`, `create`, `run`, `watch`, `scale` and `alpha`:
 
 1. `screen.inspect` runs `docker compose config --format json --no-env-resolution --profile '*'`. All profiles are included so that a service named on the command line is checked too. Without env resolution, `env_file` paths stay visible to the policy instead of being inlined. The project directory is worked out the way compose does it. A `.env` that sets `COMPOSE_FILE` is refused, because it could send compose to a different directory than the one checked.
-2. `hardening.apply` adds `cap_drop: [ALL]` and `no-new-privileges:true` where they are missing. It resolves names in `user:`, hook users and `group_add` to ids on this host (`hostusers.Accounts`); a name unknown here stays a name, which the policy refuses.
+2. `hardening.apply` adds `cap_drop: [ALL]` and `no-new-privileges:true` where they are missing. It resolves names in `user:`, hook users and `group_add` to ids on this host (`hostusers.HostAccounts`); a name unknown here stays a name, which the policy refuses.
 3. `policy.check_config` applies the allowlist (below), and the id rules (`idrules`) to every id the project gives. Services that set no `user:` are exempt for now: their images decide.
 4. `composeimages.prepare`:
    - asks compose which services will start (`config --services`);

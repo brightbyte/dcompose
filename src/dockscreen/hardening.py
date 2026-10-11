@@ -24,9 +24,9 @@ class Addition(NamedTuple):
 def apply(config, accounts=None):
     """(config with the defaults added and user names resolved, the list of additions).
 
-    accounts: the users and groups to resolve names with (hostusers.Accounts, this host's).
+    accounts: the users and groups to resolve names with (hostusers.HostAccounts, this host's).
     """
-    accounts = accounts or hostusers.Accounts()
+    accounts = accounts or hostusers.HostAccounts()
     hardened = copy.deepcopy(config)
     additions = []
     for name, service in (hardened.get("services") or {}).items():

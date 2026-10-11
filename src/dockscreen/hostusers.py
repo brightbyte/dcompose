@@ -1,4 +1,4 @@
-"""Users given on the command line: ids as typed, or a local account resolved here.
+"""The accounts on this host, and users given on the command line: ids as typed, or a local account.
 
 Docker resolves a user name in the container's own /etc/passwd, where a hostile image can map it
 to root. So `--user` takes only numbers, which mean the same everywhere, and `--as NAME` takes the
@@ -34,17 +34,18 @@ def require_numeric(spec, alternatives=DOCKER_ALTERNATIVES):
     raise UserError(f"--user takes numeric ids as uid:gid, not {spec!r}{hint}{alternatives}")
 
 
-def resolve_account(name, getpwnam=pwd.getpwnam):
-    """(`uid:gid`, messages) for the account called name on this host, with its primary group."""
+def resolve_account(name, accounts=None):
+    """(`uid:gid`, messages) for the account called name on this host, with its primary group.
+
+    accounts: where to look the name up (HostAccounts, this host's).
+    """
     if not name or ":" in name or ids.is_id(name):
         raise UserError(f"--as takes the name of a local user, not {name!r}; use --user for ids")
-    try:
-        account = getpwnam(name)
-    except KeyError:
-        raise UnknownUser(
-            f"user {name!r} does not exist on this host; use --user with a numeric id") from None
-    return (ids.format_user((account.pw_uid, account.pw_gid)),
-            [f"Resolving user {name} to uid {account.pw_uid}, gid {account.pw_gid}"])
+    account = (accounts or HostAccounts()).user(name)
+    if account is None:
+        raise UnknownUser(f"user {name!r} does not exist on this host; use --user with a numeric id")
+    uid, gid = account
+    return ids.format_user(account), [f"Resolving user {name} to uid {uid}, gid {gid}"]
 
 
 class UserOptions:
@@ -80,8 +81,8 @@ class UserOptions:
         return f"--user={ids.format_user(self.current_user)}"
 
 
-class Accounts:
-    """Users and groups on this host, by name, through NSS (so LDAP and sssd accounts count)."""
+class HostAccounts:
+    """Users and groups on this host, through NSS (so LDAP and sssd accounts count)."""
 
     def user(self, name):
         """(uid, primary gid) of the user called name, or None."""
@@ -95,5 +96,19 @@ class Accounts:
         """The gid of the group called name, or None."""
         try:
             return grp.getgrnam(name).gr_gid
+        except KeyError:
+            return None
+
+    def user_name(self, uid):
+        """The name of the user with this uid, or None."""
+        try:
+            return pwd.getpwuid(uid).pw_name
+        except KeyError:
+            return None
+
+    def group_name(self, gid):
+        """The name of the group with this gid, or None."""
+        try:
+            return grp.getgrgid(gid).gr_name
         except KeyError:
             return None

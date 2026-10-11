@@ -5,32 +5,12 @@ idrules decides whether the image may have it. Whatever is accepted runs pinned 
 difference between this reading and docker's can at worst refuse a good image.
 """
 
-import grp
-import pwd
 from typing import NamedTuple
 
 class Identity(NamedTuple):
     uid: int
     gid: int
     supplementary: tuple
-
-
-class LocalIds:
-    """The ids that exist on this host, through NSS (so LDAP and sssd accounts count)."""
-
-    def user_name(self, uid):
-        """The local account with this uid, or None."""
-        try:
-            return pwd.getpwuid(uid).pw_name
-        except KeyError:
-            return None
-
-    def group_name(self, gid):
-        """The local group with this gid, or None."""
-        try:
-            return grp.getgrgid(gid).gr_name
-        except KeyError:
-            return None
 
 
 # What Go's unicode.IsSpace trims; Python's str.strip() differs (it also strips \x1c to \x1f).
@@ -134,7 +114,7 @@ def involves_root(identity):
 
 
 def describe(identity, local=None):
-    """The identity in words; with local (LocalIds), also which local accounts the ids are."""
+    """The identity in words; with local (hostusers.HostAccounts), also which local accounts the ids are."""
     def who(kind, value):
         if local is None:
             return str(value)

@@ -14,33 +14,28 @@ GROUP = "app:x:100001:\npg:x:998:\n"
 SUBCOMMANDS = ("pull", "build", "up", "run", "create", "watch", "scale")
 
 
-class Local:
-    """The host has root, an account `daniel` with uid and gid 1000, and the group `docker` (999)."""
-
-    def user_name(self, uid):
-        return {0: "root", 1000: "daniel"}.get(uid)
-
-    def group_name(self, gid):
-        return {0: "root", 1000: "daniel", 999: "docker"}.get(gid)
-
-
 class NoSubordinate:
     def contains(self, kind, value):
         return False
 
 
 def rules(me=(4242, 4343), allow_me=False, local=None, settings=None, subordinate=None):
-    """idrules.Rules for a host like Local, with the default config unless settings says otherwise.
+    """idrules.Rules for the host of Accounts, with the default config unless settings says otherwise.
 
     The caller is 4242:4343 (alice in Accounts), so that 1000 is someone else: daniel, a local account.
     """
     settings = settings or config.Config()
-    return idrules.Rules(me, allow_me, settings.nobody_range, settings.default_user, local or Local(),
+    return idrules.Rules(me, allow_me, settings.nobody_range, settings.default_user, local or Accounts(),
                          subordinate or NoSubordinate())
 
 
 class Accounts:
-    """hostusers.Accounts for a host like Local, plus alice (4242:4343) who has no matching group."""
+    """hostusers.HostAccounts for a host with root, an account `daniel` with uid and gid 1000, the group
+    `docker` (999), and nobody.
+
+    By name there is also alice (4242:4343), who has no matching group. Her ids are not listed as local
+    accounts: tests use them as the caller's own, which idrules must tell apart from someone else's.
+    """
 
     def user(self, name):
         users = {"root": (0, 0), "nobody": (65534, 65534), "daniel": (1000, 1000), "alice": (4242, 4343)}
@@ -49,19 +44,19 @@ class Accounts:
     def group(self, name):
         return {"root": 0, "nogroup": 65534, "nobody": 65534, "daniel": 1000, "docker": 999}.get(name)
 
+    def user_name(self, uid):
+        return {0: "root", 1000: "daniel"}.get(uid)
+
+    def group_name(self, gid):
+        return {0: "root", 1000: "daniel", 999: "docker"}.get(gid)
+
 
 REAL_RESOLVE = hostusers.resolve_account  # tests that replace it by host_account must not recurse
 
 
-class _Account:
-    def __init__(self, uid, gid):
-        self.pw_uid, self.pw_gid = uid, gid
-
-
 def host_account(name):
-    """hostusers.resolve_account against a host that has alice (4242:4343) and nobody."""
-    users = {"alice": _Account(4242, 4343), "nobody": _Account(65534, 65534)}
-    return REAL_RESOLVE(name, users.__getitem__)
+    """hostusers.resolve_account against the host of Accounts."""
+    return REAL_RESOLVE(name, Accounts())
 
 
 class FakeImages:

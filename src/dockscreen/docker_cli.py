@@ -16,7 +16,6 @@ from dockscreen import (
     hostusers,
     idrules,
     imagedecision,
-    imageuser,
     messages,
     realdocker,
     screen,
@@ -89,7 +88,7 @@ def gated(argv, sub, idx, end, allow_me=False):
     if screen.is_remote(argv[:idx], os.environ, docker):
         return messages.refuse([screen.REMOTE_MESSAGE])
 
-    ctx = imagedecision.Context(docker, idrules.rules(imageuser.LocalIds(), allow_me))
+    ctx = imagedecision.Context(docker, idrules.rules(hostusers.HostAccounts(), allow_me))
     if sub == "run":
         return gate.run(ctx, args)
     if sub == "audit":

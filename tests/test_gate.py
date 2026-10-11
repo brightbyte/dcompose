@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from fakes import GROUP, PASSWD, Local, host_account, rules
+from fakes import GROUP, PASSWD, host_account, rules
 
 from dockscreen import argscan, config, docker_cli, gate, hostusers, imagedecision
 from dockscreen.dockerclient import DockerError, first_file_of_tar
@@ -366,7 +366,6 @@ def routed(monkeypatch):
     monkeypatch.setattr(docker_cli, "passthrough", lambda argv: calls.append(("exec", argv)) or 0)
     monkeypatch.setattr(docker_cli.compose_cli, "main", lambda argv: calls.append(("compose", argv)) or 0)
     monkeypatch.setattr(docker_cli, "Docker", lambda: FakeDocker(image_user="app"))
-    monkeypatch.setattr(docker_cli.imageuser, "LocalIds", Local)
     return calls
 
 

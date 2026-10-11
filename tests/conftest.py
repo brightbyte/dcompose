@@ -45,11 +45,11 @@ def fake_image_tools(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def fake_accounts(monkeypatch):
-    """Names in compose files resolve against fakes.Accounts, not this host's accounts."""
+    """Accounts are looked up in fakes.Accounts, not this host's."""
     from fakes import Accounts
 
     from dockscreen import hostusers
-    monkeypatch.setattr(hostusers, "Accounts", Accounts)
+    monkeypatch.setattr(hostusers, "HostAccounts", Accounts)
 
 
 @pytest.fixture(autouse=True)

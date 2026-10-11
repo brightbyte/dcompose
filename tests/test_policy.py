@@ -5,7 +5,7 @@ from fakes import rules
 
 from dockscreen import autofix, policy
 
-# The caller is 4242:4343, and --allow-me is given unless a test says otherwise (see fakes.Local
+# The caller is 4242:4343, and --allow-me is given unless a test says otherwise (see fakes.Accounts
 # for the rest of the host).
 OWN = "4242:4343"
 

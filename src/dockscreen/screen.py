@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 
-from dockscreen import argscan, config, idrules, imageuser, messages, policy, realdocker
+from dockscreen import argscan, config, hostusers, idrules, messages, policy, realdocker
 
 COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 COMPOSE_VARS_IN_ENV_FILE = re.compile(r"^\s*(export\s+)?COMPOSE_(FILE|PATH_SEPARATOR)\s*=", re.MULTILINE)
@@ -43,7 +43,7 @@ def check(global_args, rules=policy.check_config):
 
 def context(project_dir, allow_me=False):
     """The policy context for project_dir, from the config file; allow_me: --allow-me was given."""
-    rules = idrules.rules(imageuser.LocalIds(), allow_me)
+    rules = idrules.rules(hostusers.HostAccounts(), allow_me)
     return policy.Context(project_dir, rules, config.current().mount_dirs)
 
 

@@ -28,7 +28,6 @@ from dockscreen import (
     hostusers,
     idrules,
     imagedecision,
-    imageuser,
     messages,
     policy,
     realdocker,
@@ -156,7 +155,7 @@ def generated(global_args, project_dir):
 
 def default_tools(allow_me=False):
     docker = Docker()
-    gate_ctx = imagedecision.Context(docker, idrules.rules(imageuser.LocalIds(), allow_me))
+    gate_ctx = imagedecision.Context(docker, idrules.rules(hostusers.HostAccounts(), allow_me))
     return composeimages.Tools(
         docker, gate_ctx, lambda cmd: subprocess.run(cmd, capture_output=True, text=True, check=False),
         run_child)

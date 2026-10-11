@@ -2,6 +2,7 @@ import pytest
 from fakes import host_account
 
 from dockscreen import hostusers
+from dockscreen.hostusers import HostAccounts  # bound before conftest swaps in the fake
 
 
 @pytest.mark.parametrize("spec", ["1000:1000", "0:0", "65534:65534", "1000:0"])
@@ -42,3 +43,16 @@ def test_the_hosts_own_accounts_are_used_by_default():
 def test_a_uid_without_a_gid_says_to_give_the_group():
     with pytest.raises(hostusers.UserError, match="not '1000'; give the group too, as uid:gid"):
         hostusers.require_numeric("1000")
+
+
+def test_host_accounts_use_nss():
+    accounts = HostAccounts()
+    assert accounts.user("root") == (0, 0) and accounts.group("root") == 0
+    assert accounts.user_name(0) == "root" and accounts.group_name(0) == "root"
+    assert accounts.user("no-such-user-here") is None and accounts.group("no-such-group-here") is None
+    assert accounts.user_name(2**31 - 3) is None and accounts.group_name(2**31 - 3) is None
+
+
+def test_as_resolves_with_the_hosts_accounts():
+    assert hostusers.resolve_account("root", HostAccounts()) == (
+        "0:0", ["Resolving user root to uid 0, gid 0"])

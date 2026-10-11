@@ -33,7 +33,7 @@ class Rules(NamedTuple):
     allow_me: bool           # --allow-me (or --as-me on docker run)
     nobody_range: tuple      # inclusive (low, high)
     default_user: tuple      # (uid, gid) that replaces root
-    local: object            # imageuser.LocalIds: the accounts on this host
+    local: object            # hostusers.HostAccounts: the accounts on this host
     subordinate: object      # Subordinate: ranges in /etc/subuid and /etc/subgid
 
     def allowed(self, kind, value, extra=()):
