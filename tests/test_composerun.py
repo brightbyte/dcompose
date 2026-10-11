@@ -3,7 +3,7 @@ import os
 import pytest
 from fakes import FakeImages, make_tools, read_raw, runtime
 
-from dockscreen import argscan, composerun, hostusers, screen
+from dockscreen import argscan, composerun, config, hostusers, screen
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -316,3 +316,48 @@ def test_a_context_option_is_refused_too(monkeypatch, tmp_path, capsys):
     tools, recorder = make_tools(FakeImages(users={"x:1": "app"}))
     assert up(["--context", "prod", "up"], 2, tools) == 1
     assert recorder.children == []
+
+
+# --- image and project sections of the config file ---------------------------------
+
+def sectioned(settings, images, **kwargs):
+    """Tools whose decisions use settings, as the run does."""
+    from fakes import rules
+
+    from dockscreen import imagedecision
+    return make_tools(images, gate_ctx=imagedecision.Context(images, rules(), runtime(settings=settings)),
+                      **kwargs)
+
+
+X_DIRS = config.Config(images={"docker.io/library/x": config.Section(mount_dirs=("/srv/x",))})
+X_MOUNT = {"volumes": [{"type": "bind", "source": "/srv/x/data", "target": "/data"}]}
+
+
+def test_an_image_section_allows_a_mount_once_the_image_proves_its_origin(monkeypatch, tmp_path):
+    inspect_as(monkeypatch, tmp_path, project_config(**X_MOUNT))
+    tools, recorder = sectioned(X_DIRS, FakeImages(users={"x:1": "app"}, digests={"x:1": ["x@sha256:a"]}))
+
+    assert composerun.run(["up"], 0, runtime(settings=X_DIRS), tools) == 0
+    assert last(recorder)[1]["services"]["web"]["volumes"][0]["source"] == "/srv/x/data"
+
+
+def test_an_image_section_that_its_image_does_not_prove_is_refused_before_anything_runs(
+        monkeypatch, tmp_path, capsys):
+    inspect_as(monkeypatch, tmp_path, project_config(**X_MOUNT))
+    tools, recorder = sectioned(X_DIRS, FakeImages(users={"x:1": "app"}))  # tagged x:1 locally, no digest
+
+    assert composerun.run(["up"], 0, runtime(settings=X_DIRS), tools) == 1
+    # the name was enough to get past the first check; the image itself is not
+    assert "service web: bind mount '/srv/x/data' is outside" in capsys.readouterr().err
+    assert not any("up" in cmd for cmd in recorder.children)
+
+
+def test_a_project_section_applies_to_its_directory(monkeypatch, tmp_path, capsys):
+    settings = config.Config(projects={str(tmp_path): config.Section(mount_dirs=("/srv/x",))})
+    inspect_as(monkeypatch, tmp_path, project_config(**X_MOUNT))
+    tools, _ = sectioned(settings, FakeImages(users={"x:1": "app"}))
+    assert composerun.run(["up"], 0, runtime(settings=settings), tools) == 0
+
+    elsewhere = config.Config(projects={"/elsewhere": config.Section(mount_dirs=("/srv/x",))})
+    tools, _ = sectioned(elsewhere, FakeImages(users={"x:1": "app"}))
+    assert composerun.run(["up"], 0, runtime(settings=elsewhere), tools) == 1

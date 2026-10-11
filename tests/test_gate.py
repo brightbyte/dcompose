@@ -153,7 +153,7 @@ def test_a_root_default_user_is_announced_on_every_run(capsys):
 
 # --- users the config file sets for an image repository -----------------------------
 
-IMG_USERS = config.Config(image_users={"docker.io/library/img": (999, 999)})
+IMG_USERS = config.Config(images={"docker.io/library/img": config.Section(user=(999, 999))})
 
 
 def test_a_configured_image_user_replaces_the_images_own(capsys):
@@ -173,7 +173,7 @@ def test_a_configured_user_needs_the_image_to_have_been_pulled_from_that_reposit
 
 def test_audit_says_why_a_configured_user_does_not_apply(capsys):
     assert audit_with(FakeDocker(image_user="nobody"), IMG_USERS, "img") == 0
-    assert ("note: the config sets a user for docker.io/library/img, but this image was not pulled from "
+    assert ("note: the config has a section for docker.io/library/img, but this image was not pulled from "
             "there") in capsys.readouterr().out
 
 
@@ -489,12 +489,12 @@ def test_audit_predicts_a_refusal_and_exits_one(capsys):
             "(local user daniel)") in out
     # how to get past it: on the command line, or once for the repository in the config file
     assert "  pass --user UID:GID, --as NAME or --as-me to choose a user" in out
-    assert f"give its repository a user in [image_users] in {runtime().config_file}" in out
+    assert f'set user under [images."img"] in {runtime().config_file}' in out
 
 
 def test_run_refusals_name_the_config_file(capsys):
     assert gate.run(ctx(FakeDocker(image_user="web")), ["img"]) == 1
-    assert f"[image_users] in {runtime().config_file}" in capsys.readouterr().err
+    assert f'[images."img"] in {runtime().config_file}' in capsys.readouterr().err
 
 
 def test_audit_takes_allow_me(capsys):
@@ -535,7 +535,7 @@ def test_audit_points_out_what_a_project_could_not_ask_for(monkeypatch, tmp_path
         f"{WARN} command line: cap_add is not allowed",
         f"{WARN} command line: pid: host shares a namespace outside the project",
         f"{WARN} command line: bind mount '/etc' is outside {tmp_path}; to allow it, add a directory that "
-        f"contains it to mount_dirs in {runtime().config_file}",
+        f'contains it to mount_dirs under [projects."{tmp_path}"] in {runtime().config_file}',
     ]  # the mount inside the current directory and the named volume are fine
 
 
@@ -568,7 +568,7 @@ def test_audit_without_docker_fails(capsys):
     (["-v", "/p:/p", "--brief", "img"],
      "\u274c refused: the image's uid 100000 is not in the nobody range 65530-65534, "
      "and there are host mounts; pass --user UID:GID, --as NAME or --as-me to choose a user, or, for an "
-     f"image pulled from a registry, give its repository a user in [image_users] in {runtime().config_file} "
+     f'image pulled from a registry, set user under [images."img"] in {runtime().config_file} '
      "(+1 more)\n", 1),
 ])
 def test_brief_prints_only_the_verdict(args, out, code, capsys):
@@ -727,3 +727,40 @@ def test_assessment_predicates(kind, refused, pins_user, replaces_image_user):
     assessment = imagedecision.Assessment(kind, [])
     assert (assessment.refused, assessment.pins_user, assessment.replaces_image_user) == (
         refused, pins_user, replaces_image_user)
+
+
+# --- image and project sections of the config file ---------------------------------
+
+def test_an_image_section_changes_the_rules_for_that_image():
+    settings = config.Config(images={"docker.io/library/img": config.Section(default_user=(65533, 65533))})
+    docker = FakeDocker(image_user="", repo_digests=["img@sha256:abc"])
+    assert gate.run(ctx(docker, settings), ["img"]) == 42
+    assert "--user=65533:65533" in docker.calls[3][1]
+
+
+def test_a_project_section_applies_in_its_directory(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    settings = config.Config(projects={str(tmp_path): config.Section(user=(65532, 65532))})
+    docker = FakeDocker(image_user="app")
+    assert gate.run(ctx(docker, settings), ["img"]) == 42
+    assert "--user=65532:65532" in docker.calls[3][1]  # configured: the image's own user is not used
+
+
+def test_a_top_level_user_applies_to_every_image():
+    docker = FakeDocker(image_user="web")  # would be refused: a local account
+    assert gate.run(ctx(docker, config.Config(user=(65531, 65531))), ["img"]) == 42
+    assert "--user=65531:65531" in docker.calls[3][1]
+
+
+@pytest.mark.parametrize("digests, findings", [
+    (["img@sha256:abc"], []),
+    ([], ["command line: security_opt 'seccomp=unconfined' is not allowed"]),
+])
+def test_an_image_sections_security_opts_apply_to_what_audit_points_out(digests, findings, capsys):
+    section = config.Section(security_opts=("seccomp=unconfined",))
+    settings = config.Config(images={"docker.io/library/img": section})
+    host = {"SecurityOpt": ["no-new-privileges:true", "seccomp=unconfined"], "CapDrop": ["ALL"]}
+    docker = FakeDocker(image_user="nobody", repo_digests=digests, info_extra={"HostConfig": host})
+    audit_with(docker, settings, "img")
+    out = capsys.readouterr().out
+    assert [line[2:] for line in out.splitlines() if "command line:" in line] == findings

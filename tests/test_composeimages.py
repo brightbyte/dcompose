@@ -178,10 +178,10 @@ def test_refusals_say_what_to_do():
     assert "service web: image web:1: the image's uid 1000 exists on this host" in prepared.problems[0]
     assert "gid 1000" in prepared.problems[0]
     assert prepared.problems[0].endswith(
-        f"set user: to choose one, or give its repository a user in [image_users] in {runtime().config_file}")
+        f'set user: to choose one, or set user under [images."web"] in {runtime().config_file}')
 
 
-def test_a_built_image_is_not_pointed_at_image_users():
+def test_a_built_image_is_not_pointed_at_an_image_section():
     prepared, _, _ = prepare(project(web={"build": {"context": "."}}), FakeImages(users={"web:1": "web"}))
     assert prepared.problems[0].endswith("; set user: to choose one")  # the config file never applies
 
@@ -264,7 +264,7 @@ def test_the_final_config_passes_the_policy_with_exactly_the_vetted_services():
 
     assert policy.check_config(final, ctx._replace(vetted=vetted)) == []
     # the vetting is what lets a configured user pass that the rules alone would refuse
-    settings = configuration.Config(image_users={"docker.io/library/db": (1000, 1000)})
+    settings = configuration.Config(images={"docker.io/library/db": configuration.Section(user=(1000, 1000))})
     images = FakeImages(users={"db:1": ""}, digests={"db:1": ["db@sha256:x"]})
     _, final, vetted = decided(config, images, active=("db",), settings=settings)
     assert final["services"]["db"]["user"] == "1000:1000" and "db" in vetted
@@ -288,7 +288,7 @@ def test_descriptions_and_notices():
         (f"{WARN} service web: no user set; image web:1 would run as root; dockscreen runs it as the "
          "default user (65534:65534)"),
     ]
-    assert composeimages.notices(prepared, ctx) == [
+    assert composeimages.notices(prepared) == [
         "service web: image web:1 would run as root; dockscreen runs it as the default user (65534:65534)"]
 
 
@@ -297,7 +297,7 @@ def test_a_refusal_names_the_local_account_that_the_images_id_would_be():
     assert refused.problems == [
         ("service web: image web:1: the image's uid 1000 exists on this host (local user daniel); "
          "the image's gid 1000 exists on this host (local group daniel); set user: to choose one, "
-         f"or give its repository a user in [image_users] in {runtime().config_file}")]
+         f'or set user under [images."web"] in {runtime().config_file}')]
 
 
 # --- services with mounts ----------------------------------------------------------
@@ -342,7 +342,7 @@ def test_with_mounts_a_root_image_still_runs_as_the_default_user():
 
 # --- users the config file sets ----------------------------------------------------
 
-MARIADB = configuration.Config(image_users={"docker.io/library/mariadb": (999, 999)})
+MARIADB = configuration.Config(images={"docker.io/library/mariadb": configuration.Section(user=(999, 999))})
 
 
 def mariadb_project(**fields):
@@ -355,7 +355,7 @@ def test_a_configured_user_applies_to_an_image_pulled_from_that_repository():
 
     assert prepared.decisions["db"].assessment.kind is Kind.CONFIGURED
     assert final["services"]["db"]["user"] == "999:999" and vetted == {"db"}
-    assert composeimages.notices(prepared, gate_context(images, MARIADB)) == []  # configured: no notice
+    assert composeimages.notices(prepared) == []  # configured: no notice
     assert composeimages.describe(mariadb_project(), prepared, gate_context(images, MARIADB)) == [
         f"{GOOD} service db: no user set; image mariadb:11 runs as 999:999, "
         "the user the config file sets for it"]
@@ -374,7 +374,7 @@ def test_a_configured_user_does_not_apply_to_an_image_that_only_has_the_name(fie
     assessment = prepared.decisions["db"].assessment
     assert assessment.kind is Kind.FALLBACK  # the normal rules: root runs as the default user
     lines = composeimages.describe(config, prepared, gate_context(images, MARIADB))
-    assert lines[-1] == (f"{WARN} service db: note: the config sets a user for docker.io/library/mariadb, "
+    assert lines[-1] == (f"{WARN} service db: note: the config has a section for docker.io/library/mariadb, "
                          f"but {why}")
 
 

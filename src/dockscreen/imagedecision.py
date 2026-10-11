@@ -4,7 +4,7 @@ The image is hostile: its own /etc/passwd and /etc/group decide the identity doc
 imageuser), and the id rules decide whether the image may have it (idrules). With no user chosen, in
 this order:
 - the config file names a user for the image's repository, and the image was pulled from there:
-  that user, whatever it is (images.configured_user);
+  that user, whatever it is (images.section_for, config.effective);
 - the image would run as root (uid, gid or a supplementary gid of 0): the configured default user
   instead, nobody unless configured otherwise, with a notice;
 - otherwise the image's own user, if the id rules accept it; refused if not.
@@ -19,7 +19,7 @@ Used by `docker run` (gate) and by compose (composeimages) alike.
 import enum
 from typing import NamedTuple, Protocol, runtime_checkable
 
-from dockscreen import idrules, ids, images, imageuser
+from dockscreen import config, idrules, ids, images, imageuser
 from dockscreen.runtime import Runtime
 
 
@@ -49,15 +49,27 @@ class DockerAccess(Protocol):
 class Context(NamedTuple):
     docker: DockerAccess
     ids: idrules.Rules
-    runtime: Runtime  # the config file, the caller's ids, the host's accounts
+    runtime: Runtime               # the config file, the caller's ids, the host's accounts
+    project_dir: str | None = None  # the compose project's; for docker run, the current directory
 
     @property
     def local(self):
         return self.ids.local
 
     @property
+    def directory(self):
+        return self.project_dir or self.runtime.cwd
+
+    @property
     def settings(self):
-        return self.runtime.settings
+        """The settings for this project, without any image section."""
+        return config.effective(self.runtime.settings, None, self.directory)
+
+    def for_image(self, repository):
+        """(settings, id rules) with the image section for repository applied (None: none applies)."""
+        settings = config.effective(self.runtime.settings, repository, self.directory)
+        rules = self.ids._replace(nobody_range=settings.nobody_range, default_user=settings.default_user)
+        return settings, rules
 
     def allowing_me(self, allow_me):
         """This context with the caller's own ids allowed if allow_me, for --allow-me and --as-me."""
@@ -66,7 +78,7 @@ class Context(NamedTuple):
 
 class Kind(enum.StrEnum):
     EXPLICIT = "explicit"      # the command line chose the user: trusted, not checked
-    CONFIGURED = "configured"  # the config file names a user for the image's repository
+    CONFIGURED = "configured"  # the config file names the user, for this image, project or every one
     OK = "ok"                  # the image's own user, which the id rules accept
     FALLBACK = "fallback"      # the image would run as root: the default user instead
     REFUSED = "refused"
@@ -77,7 +89,9 @@ class Assessment(NamedTuple):
     kind: Kind
     problems: list
     identity: imageuser.Identity | None = None
-    note: str | None = None  # an image_users entry for the repository that does not apply, and why
+    note: str | None = None        # a section for the repository that does not apply, and why
+    user: tuple | None = None      # the (uid, gid) it runs as, when dockscreen decided it (pins_user)
+    section: str | None = None     # the repository whose image section applied, if one did
 
     @property
     def refused(self):
@@ -121,43 +135,44 @@ def assess(ctx, container, info, explicit=None, mounts=None, reference=None, bui
     built: the image is built from a Dockerfile by the service; the config file never applies then.
     """
     image = ctx.docker.inspect_image(info["Image"])
+    match = images.section_for(ctx.runtime.settings, reference or info["Config"].get("Image") or "",
+                               image.get("RepoDigests"), built)
+    found = {"note": match.problem, "section": match.repository}
     spec = info["Config"].get("User") or ""
     if explicit is None:
         explicit = spec != (image["Config"].get("User") or "")
     if explicit:
-        return Assessment(Kind.EXPLICIT, [])  # trusted: the person typing the command chose it
+        return Assessment(Kind.EXPLICIT, [], **found)  # trusted: the person typing the command chose it
 
-    match = images.configured_user(ctx.settings, reference or info["Config"].get("Image") or "",
-                                   image.get("RepoDigests"), built)
-    if match.user:
-        return Assessment(Kind.CONFIGURED, [], imageuser.Identity(*match.user, ()))
+    settings, rules = ctx.for_image(match.repository)
+    if settings.user:
+        return Assessment(Kind.CONFIGURED, [], imageuser.Identity(*settings.user, ()), user=settings.user,
+                          **found)
 
     passwd = ctx.docker.read_file(container, "/etc/passwd") or ""
     groups = ctx.docker.read_file(container, "/etc/group") or ""
     try:
         identity = imageuser.resolve(spec, passwd, groups)
     except ValueError as e:
-        return Assessment(Kind.REFUSED, [str(e)], note=match.problem)
+        return Assessment(Kind.REFUSED, [str(e)], **found)
     if imageuser.involves_root(identity):
-        return Assessment(Kind.FALLBACK, [], identity, match.problem)
+        return Assessment(Kind.FALLBACK, [], identity, user=settings.default_user, **found)
     if mounts is None:
         mounts = has_host_mounts(info)
-    problems = ctx.ids.problems(identity.uid, identity.gid, identity.supplementary, mounts=mounts)
+    problems = rules.problems(identity.uid, identity.gid, identity.supplementary, mounts=mounts)
     if problems:
-        return Assessment(Kind.REFUSED, [f"the image's {p}" for p in problems], identity, match.problem)
-    return Assessment(Kind.OK, [], identity, match.problem)
+        return Assessment(Kind.REFUSED, [f"the image's {p}" for p in problems], identity, **found)
+    return Assessment(Kind.OK, [], identity, user=(identity.uid, identity.gid), **found)
 
 
 def default_user_spec(ctx):
-    """The `uid:gid` that replaces an image's root user."""
+    """The `uid:gid` that replaces an image's root user in this project, without an image section."""
     return ids.format_user(ctx.settings.default_user)
 
 
-def pinned_user(ctx, assessment):
+def pinned_user(assessment):
     """The `uid:gid` a fallback, configured or accepted image user runs as, spelled as numbers."""
-    if assessment.kind is Kind.FALLBACK:
-        return default_user_spec(ctx)
-    return ids.format_user((assessment.identity.uid, assessment.identity.gid))
+    return ids.format_user(assessment.user)
 
 
 def root_default_notice(ctx):

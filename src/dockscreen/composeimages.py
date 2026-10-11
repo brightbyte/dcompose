@@ -28,7 +28,7 @@ import subprocess
 from collections.abc import Callable
 from typing import NamedTuple
 
-from dockscreen import argscan, imagedecision, imageuser, policy, verdict
+from dockscreen import argscan, imagedecision, images, imageuser, policy, verdict
 from dockscreen.dockerclient import DockerError
 
 
@@ -46,7 +46,7 @@ class Decision(NamedTuple):
     image: str
     assessment: imagedecision.Assessment
     image_id: str | None = None  # what the image name was when it was looked at
-    built: bool = False          # the service builds the image, so [image_users] never applies
+    built: bool = False          # the service builds the image, so no image section applies
 
 
 class Prepared(NamedTuple):
@@ -54,6 +54,7 @@ class Prepared(NamedTuple):
     decisions: dict   # service -> Decision, for the started services that set no user
     problems: list
     failed: bool = False  # some problems are failures to get or look at an image, not refusals
+    verified: dict | None = None  # service -> the repository whose image section its image proved
 
 
 def unset_user_services(config):
@@ -82,10 +83,30 @@ def prepare(command, config, args, tools, chosen=frozenset()):
         return Prepared(to_run, {}, failures, failed=True)
 
     decisions = decide(config, to_run - chosen, tools)
+    verified = verify_sections(config, tools)
     config_file = tools.gate_ctx.runtime.config_file
     problems = [decision_problem(name, d, config_file)
                 for name, d in decisions.items() if d.assessment.refused]
-    return Prepared(to_run, decisions, problems, failed=any(d.assessment.failed for d in decisions.values()))
+    failed = any(d.assessment.failed for d in decisions.values())
+    return Prepared(to_run, decisions, problems, failed=failed, verified=verified)
+
+
+def verify_sections(config, tools):
+    """{service: repository} for the services whose image the config file has a section for, and that
+    was proven pulled from there. The checks before the images were there trusted the name alone."""
+    settings = tools.gate_ctx.runtime.settings
+    verified = {}
+    for name, service in (config.get("services") or {}).items():
+        image, built = image_name(config, name, service), "build" in service
+        if images.name_matches(settings, image, built) is None:
+            continue
+        try:
+            digests = tools.gate_ctx.docker.inspect_image(image).get("RepoDigests")
+        except DockerError:
+            continue  # not there: the section does not apply, and the final check says what that means
+        if repository := images.section_for(settings, image, digests, built).repository:
+            verified[name] = repository
+    return verified
 
 
 def decision_problem(name, decision, config_file=None):
@@ -96,9 +117,8 @@ def decision_problem(name, decision, config_file=None):
     text = f"service {name}: image {decision.image}: {'; '.join(decision.assessment.problems)}"
     if decision.assessment.failed:
         return text
-    if decision.built or not config_file:
-        return f"{text}; set user: to choose one"
-    return f"{text}; set user: to choose one, or give its repository a user in [image_users] in {config_file}"
+    hint = images.section_hint(decision.image, config_file, decision.built) if config_file else None
+    return f"{text}; set user: to choose one" + (f", or {hint}" if hint else "")
 
 
 def verify_round_trip(command, config, tools):
@@ -225,7 +245,7 @@ def finalize(config, prepared, ctx):
             continue
         # pinned as numbers: the runtime reads neither passwd nor group for `uid:gid`, so it cannot
         # resolve the image's user to anything but what was checked
-        service["user"] = imagedecision.pinned_user(ctx, decision.assessment)
+        service["user"] = imagedecision.pinned_user(decision.assessment)
         if decision.assessment.kind is not imagedecision.Kind.FALLBACK:
             vetted.add(name)  # the default user is an allowed id, and needs no vetting
         service["pull_policy"] = "never"  # the image that was checked is the one that runs
@@ -253,24 +273,24 @@ def describe(config, prepared, ctx):
             lines.append(f"{dot} service {name}: no user set; image {decision.image} runs as {who}; "
                          "accepted")
         elif assessment.kind is imagedecision.Kind.CONFIGURED:
-            user = imagedecision.pinned_user(ctx, assessment)
+            user = imagedecision.pinned_user(assessment)
             lines.append(f"{dot} service {name}: no user set; image {decision.image} runs as {user}, "
                          "the user the config file sets for it")
         elif assessment.kind is imagedecision.Kind.FALLBACK:
-            lines.append(f"{dot} service {name}: no user set; {fallback_text(ctx, decision)}")
+            lines.append(f"{dot} service {name}: no user set; {fallback_text(decision)}")
         if assessment.note:
             lines.append(f"{verdict.WARN} service {name}: note: {assessment.note}")
     return lines
 
 
-def fallback_text(ctx, decision):
+def fallback_text(decision):
     return (f"image {decision.image} would run as root; dockscreen runs it as the default user "
-            f"({imagedecision.default_user_spec(ctx)})")
+            f"({imagedecision.pinned_user(decision.assessment)})")
 
 
-def notices(prepared, ctx):
+def notices(prepared):
     """What a run is about to do that the project did not ask for."""
     return [
-        f"service {name}: {fallback_text(ctx, d)}"
+        f"service {name}: {fallback_text(d)}"
         for name, d in prepared.decisions.items() if d.assessment.kind is imagedecision.Kind.FALLBACK
     ]

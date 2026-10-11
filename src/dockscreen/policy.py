@@ -100,17 +100,26 @@ class Context(NamedTuple):
     mounts: bool = False
     # The caller's config file, named in hints on what it can allow; no hints without it.
     config_file: str | None = None
+    security_opts: tuple = ()  # allowed besides no-new-privileges (security_opts in the config file)
+    # (name, service) -> this context for that service, with the settings of its image section if one
+    # applies; None if every service gets this one.
+    scope: object = None
 
     @property
     def mount_roots(self):
         return (self.project_dir, *self.extra_dirs)
+
+    def for_service(self, name, service):
+        return self.scope(name, service) if self.scope else self
 
 
 def check_config(config, ctx):
     project = config.get("name")
     problems = unknown_keys(config, TOP_LEVEL_KEYS, "top-level key")
     for name, service in (config.get("services") or {}).items():
-        problems += [f"service {name}: {p}" for p in check_service(service or {}, ctx, name in ctx.vetted)]
+        service_ctx = ctx.for_service(name, service or {})
+        problems += [f"service {name}: {p}"
+                     for p in check_service(service or {}, service_ctx, name in ctx.vetted)]
     for key, volume in (config.get("volumes") or {}).items():
         problems += [f"volume {key}: {p}" for p in check_volume(key, volume, project, ctx)]
     for key, network in (config.get("networks") or {}).items():
@@ -202,8 +211,9 @@ def is_selinux_label(option):
 
 def check_security_opt(value, ctx):
     options = [str(o) for o in value or []]
+    allowed = NO_NEW_PRIVILEGES | set(ctx.security_opts if ctx else ())
     problems = [f"security_opt {o!r} is not allowed{SELINUX_HINT if is_selinux_label(o) else ''}"
-                for o in options if o not in NO_NEW_PRIVILEGES]
+                for o in options if o not in allowed]
     if not has_no_new_privileges(options):
         problems.append(f"security_opt must include {SECURITY_OPT}")
     return problems
@@ -444,7 +454,8 @@ def outside(subject, ctx):
     """`subject is outside` the mount roots, with how the config file can allow it."""
     text = f"{subject} is outside {roots_text(ctx.mount_roots)}"
     if ctx.config_file:
-        text += f"; to allow it, add a directory that contains it to mount_dirs in {ctx.config_file}"
+        text += (f"; to allow it, add a directory that contains it to mount_dirs under "
+                 f"[projects.\"{ctx.project_dir}\"] in {ctx.config_file}")
     return text
 
 

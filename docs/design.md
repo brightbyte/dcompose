@@ -44,7 +44,7 @@ Who a container runs as is the decision dockscreen spends most of its effort on.
 | Source | Trusted | Checked |
 |---|---|---|
 | Command line: `--user`/`-u`, `--as`, `--as-me`, `--allow-me` | yes | form only (see [Forms](#forms)) |
-| Config file: `default_user`, `nobody_range`, `[image_users]` | yes | the file's ownership and permissions (see [Configuration](#configuration-and-options-config)) |
+| Config file: `user`, `default_user`, `nobody_range`, at the top level and in image and project sections | yes | the file's ownership and permissions (see [Configuration](#configuration-and-options-config)) |
 | Compose file: `user:`, hook `user:`, `group_add`, including values from `.env` | no | all rules |
 | Image: its `USER`, `/etc/passwd` and `/etc/group` | no | all rules |
 
@@ -53,7 +53,7 @@ Who a container runs as is the decision dockscreen spends most of its effort on.
 - **me**: the caller's real uid and gid.
 - **nobody range**: ids any project or image may use, mounts or not. `nobody_range`, 65530–65534 by default.
 - **default user**: what replaces an image's root user. `default_user`, 65534:65534 by default.
-- **configured image user**: a `uid:gid` that `[image_users]` sets for an image repository.
+- **configured user**: a `uid:gid` that `user` sets in the config file, at the top level or in the image's or project's section.
 - **allowed ids**: the nobody range, the default user, the configured image user that applies, and me when `--allow-me` was given (`--as-me` implies it for `docker run`).
 - **host mounts**: bind mounts, devices, `volumes_from`, secrets and configs. Named volumes and tmpfs are not.
 
@@ -101,15 +101,21 @@ Hook users follow step 1. Services that will not start get the default user, so 
 
 `exec` (`docker exec`, `compose exec`): a user from the command line is used as given. Without one, the process runs as the container's own user, which was checked when the container started, if dockscreen started it.
 
-### Configured image users
+### Image and project sections
 
-An `[image_users]` entry names a repository: it trusts the image's maintainer, not one image. It applies when all of these hold:
+An image section (`[images."REPOSITORY"]`) names a repository: it trusts the image's maintainer, not one image. It applies when all of these hold:
 
 - The repository is the same after normalisation: registry and namespace are filled in, so `mariadb` means `docker.io/library/mariadb` and does not match `evil.example/mariadb` or `someone/mariadb`. The tag plays no part.
 - The image was pulled from that repository: its `RepoDigests` contain an entry for it. A project, or an earlier run, can build or tag a local image under any name, and such an image has no repo digest for the repository.
 - The service has no `build:`.
 
-`audit` names the entry that applied, and says why when an entry for the repository exists but did not apply.
+`audit` says why when a section for the repository exists but did not apply.
+
+The policy checks run before the images are pulled, so they apply the section the image name points to (`images.name_matches`). Once the images are there, `composeimages.verify_sections` records which sections each image proves, and the check of the config that will run (`Project.final_ctx`) applies only those: a service that passed on the name alone is refused if its image does not prove it.
+
+A project section (`[projects."DIRECTORY"]`) applies to the compose project directory, or for `docker run` and `audit` the current directory, when it is that directory or below it, compared after resolving symlinks.
+
+`config.effective` applies the top level, the image section, then the project sections, outermost first: a single value replaces, a list is added to. The policy gets per-service settings through `policy.Context.scope`, the image decision through `imagedecision.Context.for_image`.
 
 ### Command-line options
 
@@ -180,7 +186,7 @@ Every structure has its own key list: service, mount, build, volume, network, se
 
 `idrules.Rules` implements [the id rules](#ids-the-project-and-the-image-may-not-choose). It reads `/etc/subuid` and `/etc/subgid` when it checks, and looks up local accounts through NSS, so LDAP and sssd accounts count.
 
-`imagedecision.assess` implements [steps 2 and 3](#deciding-the-user) for compose and `docker run` alike. `images.configured_user` matches `[image_users]`. Otherwise the image's identity is resolved from its `/etc/passwd` and `/etc/group`, the way moby does it, which are copied out of a container that is created but never started (`docker cp`, capped at 1 MiB). Because the result is pinned as numbers, docker reads neither file at run time, so a difference between this reading and docker's can at worst refuse a good image.
+`imagedecision.assess` implements [steps 2 and 3](#deciding-the-user) for compose and `docker run` alike. `images.section_for` decides which image section applies, and `config.effective` whether a `user` is configured. Otherwise the image's identity is resolved from its `/etc/passwd` and `/etc/group`, the way moby does it, which are copied out of a container that is created but never started (`docker cp`, capped at 1 MiB). Because the result is pinned as numbers, docker reads neither file at run time, so a difference between this reading and docker's can at worst refuse a good image.
 
 ### The `docker` wrapper (`docker_cli`, `runargs`, `gate`, `hostusers`)
 
@@ -199,15 +205,18 @@ Every structure has its own key list: service, mount, build, volume, network, se
 
 ### Configuration and options (`config`)
 
-The config files are TOML, read with `tomllib`. The user's file overrides `/etc` key by key, and `image_users` entry by entry. Unknown keys are an error. A missing user file is created from `config.template.toml`, mode 0600 in a 0700 directory, with every setting commented out: active defaults there would override `/etc`.
+The config files are TOML, read with `tomllib`. The user's file overrides `/etc` key by key, and sections by name. Unknown keys are an error. A missing user file is created from `config.template.toml`, mode 0600 in a 0700 directory, with every setting commented out: active defaults there would override `/etc`.
 
 | Key | Default | Effect |
 |---|---|---|
 | `default_user` | `65534:65534` | replaces an image's root user; a notice on every run if it is root |
 | `nobody_range` | `[65530, 65534]` | ids any project or image may use, mounts or not; may not include 65535 |
 | `mount_dirs` | none | absolute directories, besides the project, that bind mounts may come from |
-| `docker` | the next `docker` on `PATH` | absolute path of the real docker |
-| `[image_users]` | none | repository (no tag) → `uid:gid` |
+| `user` | none | the user every image runs as when the service or command line chooses none |
+| `security_opts` | none | security options allowed besides no-new-privileges |
+| `docker` | the next `docker` on `PATH` | absolute path of the real docker; top level only |
+| `[images."REPOSITORY"]` | none | the settings above, for images pulled from the repository (no tag) |
+| `[projects."DIRECTORY"]` | none | the settings above, for a project directory and below |
 
 Strict modes, as ssh does it: the file and every directory above it must be owned by the caller or root and not writable by group or others, or dockscreen refuses to run. Strict modes cannot stop an agent that runs as the caller; only a root-owned file in `/etc` does. They do not cover the `docker` binary the file names either.
 
@@ -229,10 +238,10 @@ Text from the project or the image is escaped (`text.printable`) before it is pr
 | Run compose from the generated config | re-run compose on the project's own files | compose runs as a child, not via `exec`, and shows a temporary file as its config |
 | Ask docker (`config`, `create` + `inspect`) | parse compose files and run options ourselves | an extra daemon round trip per image; depends on compose's output format |
 | The default user (nobody) for root images | refuse | images that start as root and drop privileges (postgres, redis) fail on their data directories until a user is configured or chosen |
-| With mounts, only allowed ids | accept any non-root image user | more images are refused; `image_users` and `--user` are the way out |
+| With mounts, only allowed ids | accept any non-root image user | more images are refused; a `user` in the image's section and `--user` are the way out |
 | Names resolved on the host, never in the image | let docker resolve them | `user: postgres` means the host's postgres, or is refused, unlike plain compose |
 | A uid without a group is refused | derive the gid | a silent change in behaviour would be confusing |
-| `image_users` by repository, checked by repo digest | by name only; by digest | trusts the maintainer, not one image; locally built images cannot be configured yet |
+| Image sections by repository, checked by repo digest | by name only; by digest | trusts the maintainer, not one image; locally built images get no image section |
 | One config file, trusted completely | environment variables | the file needs strict ownership; an agent running as the caller can still edit it |
 | `pull_policy: never` only in the generated file | pin in the project or in `harden` output | none; pinning in the project would silently stop its updates |
 | Pull and build before deciding | decide only on images already present | `up`, `audit` and `harden` can pull and build, but only after the static checks pass |
@@ -243,7 +252,7 @@ Text from the project or the image is escaped (`text.printable`) before it is pr
 
 - Compose `start` and `restart` are passed through unchecked. A container that plain `docker compose create` made, without dockscreen, can be started through them.
 - An explicit `user:` is checked without the configured image user: a service that sets `user: "999:999"` for an image configured as 999 is still judged by the id rules alone. Leaving `user:` out gives the configured user.
-- `image_users` cannot name a locally built image; pinning by digest or image id is not implemented.
+- Image sections cannot apply to a locally built image; pinning by digest is a [future idea](../FUTURE.md).
 - `harden` writes `user: "${UID}:${GID}"` where an image's user is refused, which needs `--allow-me` to run.
 
 ## Maintaining

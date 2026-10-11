@@ -27,7 +27,7 @@ def fix_config(config, ctx):
     """
     fixed = copy.deepcopy(config)
     for name, service in fixed.get("services", {}).items():
-        service_ctx = ctx._replace(mounts=policy.has_host_mounts(service))
+        service_ctx = ctx.for_service(name, service)._replace(mounts=policy.has_host_mounts(service))
         vetted = name in ctx.vetted and not service.get("user")
         if not vetted and policy.check_user(service.get("user"), service_ctx):
             service["user"] = USER_TEMPLATE
@@ -35,7 +35,7 @@ def fix_config(config, ctx):
             g for g in service.get("group_add", []) if not policy.check_group_add([g], service_ctx)]
         if not service["group_add"]:
             del service["group_add"]
-        if policy.check_security_opt(service.get("security_opt"), ctx):
+        if policy.check_security_opt(service.get("security_opt"), service_ctx):
             service["security_opt"] = [policy.SECURITY_OPT]
         if policy.check_cap_drop(service.get("cap_drop"), ctx):
             service["cap_drop"] = [policy.CAP_DROP]
@@ -47,7 +47,7 @@ def fix_config(config, ctx):
             if not service["volumes_from"]:
                 del service["volumes_from"]
         if "volumes" in service:
-            service["volumes"] = [fix_mount(m, ctx) for m in service["volumes"]]
+            service["volumes"] = [fix_mount(m, service_ctx) for m in service["volumes"]]
     return fixed
 
 

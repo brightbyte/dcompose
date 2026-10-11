@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 
-from dockscreen import argscan, config, messages, policy
+from dockscreen import argscan, config, images, messages, policy
 
 COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 COMPOSE_VARS_IN_ENV_FILE = re.compile(r"^\s*(export\s+)?COMPOSE_(FILE|PATH_SEPARATOR)\s*=", re.MULTILINE)
@@ -45,10 +45,28 @@ def check(global_args, runtime, rules=policy.check_config):
         return [str(e)]
 
 
-def context(project_dir, runtime, allow_me=False):
-    """The policy context for project_dir, from the config file; allow_me: --allow-me was given."""
-    return policy.Context(project_dir, runtime.rules(allow_me), runtime.settings.mount_dirs,
-                          config_file=runtime.config_file)
+def context(project_dir, runtime, allow_me=False, verified=None):
+    """The policy context for project_dir, from the config file; allow_me: --allow-me was given.
+
+    Each service is checked with the settings of its image section, if one applies. Before the images
+    are there, that is the section the image name points to; verified, once they are, maps each
+    service to the section its image was proven to have been pulled for (images.section_for).
+    """
+    def settings_context(settings):
+        rules = runtime.rules(allow_me)._replace(
+            nobody_range=settings.nobody_range, default_user=settings.default_user)
+        return policy.Context(project_dir, rules, settings.mount_dirs, config_file=runtime.config_file,
+                              security_opts=settings.security_opts)
+
+    def scope(name, service):
+        if verified is None:
+            repository = images.name_matches(runtime.settings, str(service.get("image") or ""),
+                                             "build" in service)
+        else:
+            repository = verified.get(name)
+        return settings_context(config.effective(runtime.settings, repository, project_dir))
+
+    return settings_context(config.effective(runtime.settings, None, project_dir))._replace(scope=scope)
 
 
 def sensitive_paths(runtime):
@@ -67,7 +85,7 @@ def mount_dir_warnings(runtime):
     """One warning per configured mount dir that equals or contains a sensitive path."""
     return [
         f"warning: the configured mount dir {directory} contains {found[0]}, so containers can mount it"
-        for directory in runtime.settings.mount_dirs
+        for directory in config.all_mount_dirs(runtime.settings)
         if (found := sensitive_inside(directory, runtime))
     ]
 

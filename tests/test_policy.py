@@ -245,12 +245,19 @@ def test_selinux_relabel_does_not_allow_a_bind_mount_outside_the_project(project
     assert_refused(problems_for(project, volumes=[mount]), "bind mount '/etc' is outside")
 
 
+def test_security_opts_from_the_config_file_are_allowed_too(project):
+    ctx = policy.Context(str(project), rules(), security_opts=("seccomp=/etc/strict.json",))
+    assert policy.check_security_opt(["no-new-privileges:true", "seccomp=/etc/strict.json"], ctx) == []
+    assert policy.check_security_opt(["seccomp=/etc/strict.json"], ctx) == [
+        "security_opt must include no-new-privileges:true"]  # still required
+
+
 def test_a_mount_outside_says_how_the_config_file_can_allow_it(project):
     config_file = "/home/me/.config/dockscreen/config.toml"
     ctx = policy.Context(str(project), rules(allow_me=True), config_file=config_file)
     assert policy.check_mounts([bind("/srv/data")], ctx) == [
         f"bind mount '/srv/data' is outside {project}; to allow it, add a directory that contains it to "
-        "mount_dirs in /home/me/.config/dockscreen/config.toml"]
+        f'mount_dirs under [projects."{project}"] in /home/me/.config/dockscreen/config.toml']
 
 
 def test_bind_mount_outside_project_is_refused(project):

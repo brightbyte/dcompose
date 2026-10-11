@@ -48,6 +48,8 @@ class Project(NamedTuple):
     tools: composeimages.Tools
     remote: bool               # the daemon may not be this host's own
     docker_binary: str         # the real docker, to run `docker compose` with
+    runtime: object = None     # runtime.Runtime it was loaded with
+    allow_me: bool = False
 
     def static_ctx(self):
         """ctx for the checks that run before any image is looked at: unset users are decided later."""
@@ -61,6 +63,11 @@ class Project(NamedTuple):
         if self.remote:
             problems.append(screen.REMOTE_MESSAGE)
         return problems
+
+    def final_ctx(self, prepared, vetted):
+        """ctx for the config that will run: image sections only where the image proved them."""
+        verified = prepared.verified or {}
+        return screen.context(self.directory, self.runtime, self.allow_me, verified)._replace(vetted=vetted)
 
     def generated(self):
         """generated() for this project."""
@@ -77,9 +84,11 @@ def load_project(global_args, runtime, allow_me, tools=None):
     config, directory = screen.inspect(global_args, runtime)
     hardened, additions = hardening.apply(config, runtime.accounts)
     tools = tools or default_tools(runtime, allow_me)
+    tools = tools._replace(gate_ctx=tools.gate_ctx._replace(project_dir=directory))
     remote = screen.is_remote(global_args, runtime.env, tools.gate_ctx.docker)
     ctx = screen.context(directory, runtime, allow_me)
-    return Project(global_args, directory, hardened, additions, ctx, tools, remote, runtime.docker.binary)
+    return Project(global_args, directory, hardened, additions, ctx, tools, remote, runtime.docker.binary,
+                   runtime, allow_me)
 
 
 def run(argv, idx, runtime, tools=None, allow_me=False):
@@ -109,9 +118,9 @@ def run(argv, idx, runtime, tools=None, allow_me=False):
         if not messages.report(prepared.problems):
             return 1
         final, vetted = composeimages.finalize(hardened, prepared, tools.gate_ctx)
-        if not messages.report(policy.check_config(final, project.ctx._replace(vetted=vetted))):  # what runs
+        if not messages.report(policy.check_config(final, project.final_ctx(prepared, vetted))):  # what runs
             return 1
-        for line in [*lines, *composeimages.notices(prepared, tools.gate_ctx)]:
+        for line in [*lines, *composeimages.notices(prepared)]:
             if line:
                 messages.notice(line)
         return tools.run_child([*command(final), argv[idx], *parsed.args])

@@ -5,9 +5,13 @@ their content there: the file and every directory above it must be owned by the 
 writable by group or others, as ssh's StrictModes requires. A project cannot configure dockscreen;
 environment variables do not configure it either.
 
-The user's file overrides the system file key by key, and image_users entry by entry. A missing user
-file is created from config.template.toml, with every setting commented out, so that it shows the
-defaults without overriding the system file.
+The user's file overrides the system file key by key, and [images] and [projects] section by section.
+A missing user file is created from config.template.toml, with every setting commented out, so that it
+shows the defaults without overriding the system file.
+
+The settings can also be given per image (`[images."REPOSITORY"]`) and per project
+(`[projects."DIRECTORY"]`). They apply in that order, after the top level (effective): a single value
+replaces the one before, a list is added to the ones before.
 """
 
 import importlib.resources
@@ -20,7 +24,9 @@ from typing import NamedTuple
 from dockscreen import ids, images, messages
 
 SYSTEM_FILE = "/etc/dockscreen/config.toml"
-KEYS = frozenset({"default_user", "nobody_range", "mount_dirs", "docker", "image_users"})
+# What the top level, an image section and a project section may set.
+SETTINGS = frozenset({"user", "default_user", "nobody_range", "mount_dirs", "security_opts"})
+KEYS = SETTINGS | {"docker", "images", "projects"}
 # 65535 and 4294967295 are (uid_t)-1 in 16 and 32 bits, which tools read as "no id".
 NO_ID = frozenset({65535, 4294967295})
 
@@ -29,12 +35,60 @@ class ConfigError(Exception):
     """A config file cannot be trusted or read; dockscreen refuses to run."""
 
 
+class Section(NamedTuple):
+    """The settings an image or project section gives; None and () for those it leaves alone."""
+    user: tuple | None = None
+    default_user: tuple | None = None
+    nobody_range: tuple | None = None
+    mount_dirs: tuple = ()
+    security_opts: tuple = ()
+
+
 class Config(NamedTuple):
+    user: tuple | None = None                # (uid, gid) an image runs as when nothing chose a user
     default_user: tuple = (65534, 65534)     # (uid, gid) that replaces an image's root user
     nobody_range: tuple = (65530, 65534)     # inclusive: ids any image or project may use
     mount_dirs: tuple = ()                   # absolute directories bind mounts may come from
+    security_opts: tuple = ()                # security options allowed besides no-new-privileges
     docker: str | None = None                # absolute path of the real docker
-    image_users: MappingProxyType = MappingProxyType({})  # normalised repository -> (uid, gid)
+    images: MappingProxyType = MappingProxyType({})    # normalised repository -> Section
+    projects: MappingProxyType = MappingProxyType({})  # absolute directory -> Section
+
+
+def effective(config, repository=None, directory=None):
+    """The settings for an image pulled from repository (None: no image section applies), in a project
+    in directory (None: no project): the top level, then the image's section, then the sections of the
+    projects that directory is in, outermost first. The result has no sections of its own.
+    """
+    sections = [config.images[repository]] if repository in config.images else []
+    if directory is not None:
+        real = os.path.realpath(directory)
+        matching = [d for d in config.projects if is_inside(real, os.path.realpath(d))]
+        sections += [config.projects[d] for d in sorted(matching, key=lambda d: len(os.path.realpath(d)))]
+    result = config._replace(images=MappingProxyType({}), projects=MappingProxyType({}))
+    for section in sections:
+        result = amend(result, section)
+    return result
+
+
+def amend(config, section):
+    """config with section applied: single values replaced, lists added to."""
+    changes = {key: getattr(section, key) for key in ("user", "default_user", "nobody_range")
+               if getattr(section, key) is not None}
+    for key in ("mount_dirs", "security_opts"):
+        before = getattr(config, key)
+        changes[key] = (*before, *(v for v in getattr(section, key) if v not in before))
+    return config._replace(**changes)
+
+
+def is_inside(path, root):
+    return os.path.commonpath([path, root]) == root
+
+
+def all_mount_dirs(config):
+    """Every mount dir the config names: the top level's and every section's."""
+    sections = [*config.images.values(), *config.projects.values()]
+    return tuple(dict.fromkeys([*config.mount_dirs, *(d for s in sections for d in s.mount_dirs)]))
 
 
 def user_file(env, home):
@@ -76,21 +130,64 @@ def load(paths, uid, check=None):
     check(path, uid) raises ConfigError for a file that cannot be trusted (strict_modes by default).
     """
     check = check or strict_modes
-    merged, image_users = {}, {}
+    config = Config()
     for path in paths:
         data = read(path, uid, check)
-        if data is None:
-            continue
-        unknown = sorted(set(data) - KEYS)
-        if unknown:
-            raise ConfigError(f"{path}: unknown key {unknown[0]!r}")
-        users = data.pop("image_users", {})
-        if not isinstance(users, dict):
-            raise ConfigError(f"{path}: image_users must be a table")
-        image_users.update({repository_key(path, k): user_value(path, f"image_users {k!r}", v)
-                            for k, v in users.items()})
-        merged.update({key: (path, value) for key, value in data.items()})
-    return build(merged, image_users)
+        if data is not None:
+            config = merge(config, path, data)
+    return config
+
+
+def merge(config, path, data):
+    """config with the file at path read over it: its keys replace, its sections replace by name."""
+    unknown = sorted(set(data) - KEYS)
+    if unknown:
+        raise ConfigError(f"{path}: unknown key {unknown[0]!r}")
+    images_ = {repository_key(path, name): section(path, f"images {name!r}", value)
+               for name, value in table(path, "images", data.get("images", {})).items()}
+    projects = {project_key(path, name): section(path, f"projects {name!r}", value)
+                for name, value in table(path, "projects", data.get("projects", {})).items()}
+    top = section(path, "", {k: v for k, v in data.items() if k in SETTINGS})
+    changes = {key: value for key, value in top._asdict().items() if key in data}
+    if "docker" in data:
+        if not isinstance(data["docker"], str) or not os.path.isabs(data["docker"]):
+            raise ConfigError(f"{path}: docker must be an absolute path")
+        changes["docker"] = data["docker"]
+    return config._replace(**changes, images=MappingProxyType({**config.images, **images_}),
+                           projects=MappingProxyType({**config.projects, **projects}))
+
+
+def table(path, key, value):
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: {key} must be a table of sections")
+    return value
+
+
+def section(path, where, data):
+    """The Section that data sets; where names it in errors ("" for the top level)."""
+    prefix = f"{path}: {where} " if where else f"{path}: "
+    if not isinstance(data, dict):
+        raise ConfigError(f"{prefix}must be a table")
+    unknown = sorted(set(data) - SETTINGS)
+    if unknown:
+        raise ConfigError(f"{prefix}unknown key {unknown[0]!r}")
+    fields = {}
+    for key in ("user", "default_user"):
+        if key in data:
+            fields[key] = user_value(path, f"{where} {key}".strip(), data[key])
+    if "nobody_range" in data:
+        fields["nobody_range"] = id_range(path, data["nobody_range"])
+    if "mount_dirs" in data:
+        value = data["mount_dirs"]
+        if not isinstance(value, list) or not all(isinstance(d, str) and os.path.isabs(d) for d in value):
+            raise ConfigError(f"{prefix}mount_dirs must be a list of absolute paths")
+        fields["mount_dirs"] = tuple(value)
+    if "security_opts" in data:
+        value = data["security_opts"]
+        if not isinstance(value, list) or not all(isinstance(o, str) and o for o in value):
+            raise ConfigError(f"{prefix}security_opts must be a list of security options")
+        fields["security_opts"] = tuple(value)
+    return Section(**fields)
 
 
 def read(path, uid, check):
@@ -125,26 +222,6 @@ def strict_modes(path, uid, stat_path=os.stat):
         current = parent
 
 
-def build(merged, image_users):
-    config = Config()
-    if "default_user" in merged:
-        path, value = merged["default_user"]
-        config = config._replace(default_user=user_value(path, "default_user", value))
-    if "nobody_range" in merged:
-        config = config._replace(nobody_range=id_range(*merged["nobody_range"]))
-    if "mount_dirs" in merged:
-        path, value = merged["mount_dirs"]
-        if not isinstance(value, list) or not all(isinstance(d, str) and os.path.isabs(d) for d in value):
-            raise ConfigError(f"{path}: mount_dirs must be a list of absolute paths")
-        config = config._replace(mount_dirs=tuple(value))
-    if "docker" in merged:
-        path, value = merged["docker"]
-        if not isinstance(value, str) or not os.path.isabs(value):
-            raise ConfigError(f"{path}: docker must be an absolute path")
-        config = config._replace(docker=value)
-    return config._replace(image_users=MappingProxyType(image_users))
-
-
 def user_value(path, key, value):
     """(uid, gid) from "uid:gid"; names are not resolved here, both must be numbers."""
     user = ids.parse_user(value) if isinstance(value, str) else None
@@ -163,11 +240,18 @@ def id_range(path, value):
 
 
 def repository_key(path, name):
-    """The normalised repository an image_users entry names; a tag or digest is an error."""
+    """The normalised repository an image section names; a tag or digest is an error."""
     try:
         repository, tag, digest = images.split_reference(name)
     except ValueError as e:
-        raise ConfigError(f"{path}: image_users {name!r}: {e}") from None
+        raise ConfigError(f"{path}: images {name!r}: {e}") from None
     if tag or digest:
-        raise ConfigError(f"{path}: image_users {name!r} names a repository; leave out the tag or digest")
+        raise ConfigError(f"{path}: images {name!r} names a repository; leave out the tag or digest")
     return repository
+
+
+def project_key(path, name):
+    """The directory a project section names, which must be absolute."""
+    if not os.path.isabs(name):
+        raise ConfigError(f"{path}: projects {name!r} must be an absolute directory")
+    return os.path.normpath(name)

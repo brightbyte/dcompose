@@ -30,7 +30,7 @@ Containers don't run as root or as you unless you say so.
 - A project or an image may not pick root, an id of a local account, an id from `/etc/subuid` or `/etc/subgid`, or 65535 and 4294967295. That applies to the uid, the gid and supplementary groups.
 - With host mounts (bind mounts, devices, `volumes_from`, secrets, configs), the id must be in the nobody range (65530–65534 unless configured), the default user, a user configured for the image, or you with `--allow-me`.
 - To run services as yourself: `dockscreen --allow-me compose up`, with `user: "${UID}:${GID}"` on those services. dockscreen sets `UID` and `GID` to your real ids.
-- To give an image a user of its own, such as mariadb's 999, set it in `[image_users]` in the config file.
+- To give an image a user of its own, such as mariadb's 999, set `user` in its section of the config file, `[images."mariadb"]`.
 - Names in `user:` and `--as` are resolved on this host, not in the image. A name unknown here is refused, and so is a uid without a group.
 
 The full rules are in [docs/design.md](docs/design.md#users-and-groups).
@@ -66,15 +66,22 @@ dockscreen reads `/etc/dockscreen/config.toml` and then `~/.config/dockscreen/co
 default_user = "65534:65534"       # replaces an image's root user
 nobody_range = [65530, 65534]      # ids any project or image may use, mounts or not
 mount_dirs = ["/srv/shared-data"]  # where bind mounts may come from, besides the project
+security_opts = []                 # security options allowed besides no-new-privileges
+user = "1000:1000"                 # the user every image runs as, unless the service or you choose one
 docker = "/usr/bin/docker"         # the real docker, if not the next one on PATH
 
-[image_users]                      # a user for every image pulled from a repository
-"mariadb" = "999:999"
+[images."mariadb"]                 # for every image pulled from this repository
+user = "999:999"
+
+[projects."/home/me/src/shop"]     # for this project directory and everything below it
+mount_dirs = ["/srv/shop-uploads"]
 ```
+
+Every setting except `docker` can also go in an image section and a project section. They apply in that order, after the top level: a single value (`user`, `default_user`, `nobody_range`) replaces the one before, a list (`mount_dirs`, `security_opts`) is added to. Nothing stops a section from allowing too much: that is your call.
 
 When dockscreen refuses something the config file could allow (a bind mount outside the project, an image's own user), the message names the setting and your config file.
 
-An `image_users` entry names a repository, without tag: it trusts the image's maintainer. It applies only to an image that docker records as pulled from that repository, and never to a service that builds its image, because anything can be tagged locally under any name.
+An image section names a repository, without tag: it trusts the image's maintainer. It applies only to an image that docker records as pulled from that repository, and never to a service that builds its image, because anything can be tagged locally under any name. Before an image is pulled, its name is enough to pass the first checks; the check right before the run needs the proof, and refuses a service that only passed because of a section its image does not have.
 
 A `mount_dirs` entry that contains your home directory, a system directory, the config file or the docker socket gets a warning on every run. A project directory that contains one of them is refused, and the search for a compose file stops at your home directory and at the first directory that is not yours.
 
@@ -130,7 +137,7 @@ Exit status 2 means the audit was called wrongly. The report ends with the verdi
 
 `--brief` prints only the verdict, in one line, such as `✅ passed` or `❌ refused: privileged is not allowed (+2 more)`. Output from docker itself, such as pull progress, still appears.
 
-Images that start as root and drop privileges themselves, such as postgres or redis, usually need `--user`, `user:` or an `image_users` entry.
+Images that start as root and drop privileges themselves, such as postgres or redis, usually need `--user`, `user:` or a `user` in their image section of the config file.
 
 ## Wrapping `docker`
 

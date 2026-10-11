@@ -13,3 +13,11 @@ Why it is not done yet:
 - Strict `run` alone leaves gaps: `create`, `start` of a container created elsewhere, `exec --privileged`, `compose run -v` and `--cap-add`, `docker cp`. Each needs its own decision, or strict mode promises more than it does.
 
 Until then, `--strict-screen` is refused for every subcommand except `audit`, so that nobody gets lenient screening while asking for strict.
+
+## Image sections pinned by digest
+
+An image section could name a digest as well as a repository. An image that matches the repository but not the digest would then be refused, not run without the section's settings: whoever wrote the section trusted that content, and a different image under the same name is not it. A section without a digest keeps matching any image pulled from the repository.
+
+## Image sections with and without a tag
+
+Two sections could match one image: one for the repository (`mariadb`) and one for a tag of it (`mariadb:11`), the tagged one applied after the other. Then settings for every version and settings for one version can live side by side. It needs a rule for an image pulled under several tags.

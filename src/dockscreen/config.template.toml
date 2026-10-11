@@ -2,6 +2,10 @@
 # The commented values are the defaults: uncomment a line to change it.
 # Keep this file and its directories writable by you only, or dockscreen refuses to run.
 
+# The user an image runs as when neither the service nor the command line chooses one, as numeric
+# "uid:gid". Not set: the image's own user, if the id rules accept it.
+#user = "1000:1000"
+
 # The user that replaces an image's root user, as numeric "uid:gid".
 #default_user = "65534:65534"
 
@@ -12,10 +16,18 @@
 #mount_dirs = []
 #mount_dirs = ["/srv/shared-data"]
 
+# Security options a service may have besides no-new-privileges, such as a seccomp profile.
+#security_opts = []
+#security_opts = ["seccomp=/etc/docker/seccomp-strict.json"]
+
 # The real docker, as an absolute path. By default, the next docker on PATH that is not the wrapper.
 #docker = "/usr/bin/docker"
 
-# The user for every image pulled from a repository (no tag), as numeric "uid:gid".
-[image_users]
-#mariadb = "999:999"
-#"ghcr.io/example/app" = "1234:1234"
+# The settings above, except docker, for every image pulled from one repository (no tag). They apply
+# after the ones above: a single value replaces, a list adds to.
+#[images."mariadb"]
+#user = "999:999"
+
+# The same for a project directory and everything below it, after the image's section.
+#[projects."/home/me/src/shop"]
+#mount_dirs = ["/srv/shop-uploads"]
