@@ -18,6 +18,7 @@ from dockscreen import (
     messages,
     screen,
 )
+from dockscreen.dockerclient import DockerNotFound
 from dockscreen.runtime import load_runtime
 
 # Global `docker` options that consume the following token as their value.
@@ -34,6 +35,9 @@ def main(argv=None):
         return dispatch(argv)
     except config.ConfigError as e:
         return messages.refuse([f"config file {e}"])
+    except DockerNotFound as e:
+        messages.notice(e)
+        return 1
 
 
 def dispatch(argv):

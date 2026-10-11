@@ -5,6 +5,8 @@ import json
 import subprocess
 import tarfile
 
+from dockscreen import messages
+
 MAX_FILE_BYTES = 1 << 20  # /etc/passwd and /etc/group come from a hostile image
 
 
@@ -12,11 +14,15 @@ class DockerError(Exception):
     pass
 
 
+class DockerNotFound(DockerError):
+    """The docker binary does not exist."""
+
+
 class Docker:
     def __init__(self, binary, run=subprocess.run, call=subprocess.call, popen=subprocess.Popen):
         """binary: the real docker (realdocker.locate)."""
         self.binary = binary
-        self.run, self.call, self.popen = run, call, popen
+        self.run, self.call, self.popen = found(run), found(call), found(popen)
 
     def create(self, args):
         """(exit code, container id or None). stderr stays on the terminal so pull progress shows."""
@@ -67,6 +73,16 @@ class Docker:
     def context(self):
         result = self.run([self.binary, "context", "show"], capture_output=True, text=True)
         return result.stdout.strip() if result.returncode == 0 else None
+
+
+def found(launch):
+    """launch (subprocess.run, call or Popen), raising DockerNotFound if the binary does not exist."""
+    def launch_found(cmd, **kwargs):
+        try:
+            return launch(cmd, **kwargs)
+        except FileNotFoundError:
+            raise DockerNotFound(messages.DOCKER_NOT_FOUND) from None
+    return launch_found
 
 
 def first_file_of_tar(data):

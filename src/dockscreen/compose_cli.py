@@ -21,6 +21,7 @@ from dockscreen import (
     screen,
 )
 from dockscreen.commands import ALIASES, COMMANDS
+from dockscreen.dockerclient import DockerNotFound
 from dockscreen.runtime import load_runtime
 
 # Subcommands that create containers from the config. `alpha` is a group (older
@@ -60,6 +61,9 @@ def main(argv=None, runtime=None):
         return dispatch(argv, runtime)
     except config.ConfigError as e:
         return messages.refuse([f"config file {e}"])
+    except DockerNotFound as e:
+        messages.notice(e)
+        return 1
 
 
 def dispatch(argv, runtime=None):
