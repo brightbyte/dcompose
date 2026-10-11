@@ -3,17 +3,14 @@
 import os
 import sys
 
-from dockscreen import config
-
-_cached = None
 
 
-def docker_bin():
-    """Path of the real docker, or plain "docker" so that exec reports the usual error."""
-    global _cached
-    if _cached is None:
-        _cached = choose(config.current(), os.environ, {os.path.realpath(sys.argv[0])})
-    return _cached
+def locate(settings, env):
+    """Path of the real docker for this process, or plain "docker" so that exec reports the usual error.
+
+    The wrapper this process was started as is skipped.
+    """
+    return choose(settings, env, {os.path.realpath(sys.argv[0])})
 
 
 def choose(settings, env, wrappers):

@@ -16,7 +16,7 @@ def test_export_sets_the_real_ids_and_is_idempotent():
 
 
 def test_main_exports_ids_for_compose_interpolation(monkeypatch):
-    monkeypatch.setattr(compose_cli, "forward", lambda argv: None)
+    monkeypatch.setattr(compose_cli, "forward", lambda argv, runtime: None)
     monkeypatch.setenv("UID", "7")
 
     compose_cli.main(["ps"])

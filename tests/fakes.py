@@ -151,7 +151,7 @@ def make_tools(images=None, active=("web",), codes=None, on_child=None, reads=No
         return subprocess.CompletedProcess(cmd, 0, "\n".join(active) + "\n", "")
 
     gate_ctx = gate_ctx or imagedecision.Context(images, rules(), runtime(me=(1000, 1000)))
-    return composeimages.Tools(images, gate_ctx, capture, run_child), recorder
+    return composeimages.Tools(gate_ctx, capture, run_child), recorder
 
 
 def read_config(cmd):

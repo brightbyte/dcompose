@@ -5,8 +5,6 @@ import json
 import subprocess
 import tarfile
 
-from dockscreen import realdocker
-
 MAX_FILE_BYTES = 1 << 20  # /etc/passwd and /etc/group come from a hostile image
 
 
@@ -15,12 +13,10 @@ class DockerError(Exception):
 
 
 class Docker:
-    def __init__(self, run=subprocess.run, call=subprocess.call, popen=subprocess.Popen):
+    def __init__(self, binary, run=subprocess.run, call=subprocess.call, popen=subprocess.Popen):
+        """binary: the real docker (realdocker.locate)."""
+        self.binary = binary
         self.run, self.call, self.popen = run, call, popen
-
-    @property
-    def binary(self):
-        return realdocker.docker_bin()
 
     def create(self, args):
         """(exit code, container id or None). stderr stays on the terminal so pull progress shows."""

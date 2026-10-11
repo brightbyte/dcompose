@@ -16,10 +16,8 @@ from dockscreen import (
     hostusers,
     imagedecision,
     messages,
-    realdocker,
     screen,
 )
-from dockscreen.dockerclient import Docker
 from dockscreen.runtime import load_runtime
 
 # Global `docker` options that consume the following token as their value.
@@ -40,16 +38,16 @@ def main(argv=None):
 
 def dispatch(argv):
     skipped, argv = flags.strip(argv, DOCKER_OPTS_WITH_VALUE)
+    runtime = load_runtime()  # a config file that cannot be trusted stops everything, before any docker runs
     if skipped:
         flags.banner()
-        return passthrough(argv)
+        return passthrough(argv, runtime)
 
     allow_me, argv = flags.strip(argv, DOCKER_OPTS_WITH_VALUE, flags.ALLOW_ME)
-    runtime = load_runtime()  # a config file that cannot be trusted stops everything, before any docker runs
 
     idx = argscan.find_subcommand(argv, DOCKER_OPTS_WITH_VALUE)
     if idx is None:
-        return passthrough(argv)
+        return passthrough(argv, runtime)
 
     if argv[idx] == "compose":
         if idx != 0:
@@ -61,7 +59,7 @@ def dispatch(argv):
     if sub == "container" and idx + 1 < len(argv) and argv[idx + 1] in GATED - {"audit"}:
         sub, end = argv[idx + 1], idx + 1
     if sub not in GATED:
-        return passthrough(argv)
+        return passthrough(argv, runtime)
     return gated(argv, sub, idx, end, runtime, allow_me)
 
 
@@ -73,18 +71,18 @@ def gated(argv, sub, idx, end, runtime, allow_me=False):
             messages.notice("Predict what `docker run IMAGE` would do: run, run as nobody, or be refused.")
             return 2
     elif args[:1] == ["--help"] or (sub in ("run", "create") and not args):
-        return passthrough(argv)
+        return passthrough(argv, runtime)
     if sub == "create":
         try:
             resolved = gate.create_args(args, runtime)
         except hostusers.UserError as e:
             return messages.refuse([str(e)])
-        return passthrough([*lead, *gate.DEFAULTS, *resolved])
+        return passthrough([*lead, *gate.DEFAULTS, *resolved], runtime)
     if sub == "exec":
         resolved = compose_cli.rewrite_exec("docker exec", args, runtime)
-        return 1 if resolved is None else passthrough([*lead, *resolved])
+        return 1 if resolved is None else passthrough([*lead, *resolved], runtime)
 
-    docker = Docker()
+    docker = runtime.docker
     if screen.is_remote(argv[:idx], runtime.env, docker):
         return messages.refuse([screen.REMOTE_MESSAGE])
 
@@ -94,12 +92,12 @@ def gated(argv, sub, idx, end, runtime, allow_me=False):
     if sub == "audit":
         return gate.audit(ctx, args)
     problems = gate.check_existing(ctx, args)
-    return messages.refuse(problems) if problems else passthrough(argv)
+    return messages.refuse(problems) if problems else passthrough(argv, runtime)
 
 
-def passthrough(argv):
+def passthrough(argv, runtime):
     """Replace this process with the real docker."""
-    binary = realdocker.docker_bin()
+    binary = runtime.docker.binary
     try:
         os.execvp(binary, [binary, *argv])
     except FileNotFoundError:

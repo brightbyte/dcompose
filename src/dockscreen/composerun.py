@@ -29,11 +29,9 @@ from dockscreen import (
     imagedecision,
     messages,
     policy,
-    realdocker,
     screen,
     shellenv,
 )
-from dockscreen.dockerclient import Docker
 
 # Options that select the files and the project; ours replace them.
 REPLACED_OPTIONS = ("--file", "-f", "--project-directory", "--project-name", "-p")
@@ -49,6 +47,7 @@ class Project(NamedTuple):
     ctx: policy.Context        # with nothing vetted yet
     tools: composeimages.Tools
     remote: bool               # the daemon may not be this host's own
+    docker_binary: str         # the real docker, to run `docker compose` with
 
     def static_ctx(self):
         """ctx for the checks that run before any image is looked at: unset users are decided later."""
@@ -65,7 +64,7 @@ class Project(NamedTuple):
 
     def generated(self):
         """generated() for this project."""
-        return generated(self.global_args, self.directory)
+        return generated(self.global_args, self.directory, self.docker_binary)
 
 
 def load_project(global_args, runtime, allow_me, tools=None):
@@ -78,9 +77,9 @@ def load_project(global_args, runtime, allow_me, tools=None):
     config, directory = screen.inspect(global_args, runtime)
     hardened, additions = hardening.apply(config, runtime.accounts)
     tools = tools or default_tools(runtime, allow_me)
-    remote = screen.is_remote(global_args, runtime.env, tools.docker)
+    remote = screen.is_remote(global_args, runtime.env, tools.gate_ctx.docker)
     ctx = screen.context(directory, runtime, allow_me)
-    return Project(global_args, directory, hardened, additions, ctx, tools, remote)
+    return Project(global_args, directory, hardened, additions, ctx, tools, remote, runtime.docker.binary)
 
 
 def run(argv, idx, runtime, tools=None, allow_me=False):
@@ -134,7 +133,7 @@ def chosen(parsed):
 
 
 @contextlib.contextmanager
-def generated(global_args, project_dir):
+def generated(global_args, project_dir, docker_binary):
     """A private temporary directory for generated configs; yields command(config) -> compose command.
 
     The command is `docker compose` on that config alone, with the project directory and name pinned,
@@ -147,18 +146,16 @@ def generated(global_args, project_dir):
             with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
                 json.dump(config, f)  # JSON is YAML
             return [
-                realdocker.docker_bin(), "compose", *argscan.strip_options(global_args, REPLACED_OPTIONS),
+                docker_binary, "compose", *argscan.strip_options(global_args, REPLACED_OPTIONS),
                 "-f", path, "--project-directory", project_dir, "--project-name", config["name"],
             ]
         yield command
 
 
 def default_tools(runtime, allow_me=False):
-    docker = Docker()
-    gate_ctx = imagedecision.Context(docker, runtime.rules(allow_me), runtime)
+    gate_ctx = imagedecision.Context(runtime.docker, runtime.rules(allow_me), runtime)
     return composeimages.Tools(
-        docker, gate_ctx, lambda cmd: subprocess.run(cmd, capture_output=True, text=True, check=False),
-        run_child)
+        gate_ctx, lambda cmd: subprocess.run(cmd, capture_output=True, text=True, check=False), run_child)
 
 
 def run_child(cmd):

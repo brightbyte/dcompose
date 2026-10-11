@@ -48,7 +48,7 @@ def test_dockscreen_flag_also_skips_the_extra_subcommands(forwarded):
 ])
 def test_docker_with_the_flag_is_plain_docker_with_a_warning(monkeypatch, capsys, argv, expected):
     calls = []
-    monkeypatch.setattr(docker_cli, "passthrough", lambda a: calls.append(a) or 0)
+    monkeypatch.setattr(docker_cli, "passthrough", lambda a, _: calls.append(a) or 0)
     monkeypatch.setattr(docker_cli.compose_cli, "main", lambda *a: 1 / 0)
 
     docker_cli.main(argv)
@@ -59,6 +59,6 @@ def test_docker_with_the_flag_is_plain_docker_with_a_warning(monkeypatch, capsys
 
 def test_docker_without_a_global_flag_gets_no_exemption(monkeypatch):
     calls = []
-    monkeypatch.setattr(docker_cli, "passthrough", lambda a: calls.append(a) or 0)
+    monkeypatch.setattr(docker_cli, "passthrough", lambda a, _: calls.append(a) or 0)
     docker_cli.main(["create", "img", FLAG])  # belongs to the command
     assert calls == [["create", "--cap-drop=ALL", "--security-opt=no-new-privileges:true", "img", FLAG]]

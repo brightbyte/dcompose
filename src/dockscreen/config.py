@@ -10,7 +10,6 @@ file is created from config.template.toml, with every setting commented out, so 
 defaults without overriding the system file.
 """
 
-import functools
 import importlib.resources
 import os
 import stat
@@ -46,13 +45,12 @@ def user_file(env, home):
     return os.path.join(base, "dockscreen", "config.toml")
 
 
-@functools.cache
-def current():
-    """The configuration for this process, read once."""
-    path = user_file(os.environ, os.path.expanduser("~"))
+def load_current(env, home, uid):
+    """The configuration of the caller with this environment, home directory and uid."""
+    path = user_file(env, home)
     if create_user_file(path):
         messages.notice(f"created {path}, which shows the defaults")
-    return load([SYSTEM_FILE, path], os.getuid())
+    return load([SYSTEM_FILE, path], uid)
 
 
 def create_user_file(path):

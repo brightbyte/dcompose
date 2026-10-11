@@ -362,9 +362,9 @@ def test_existing_containers_are_checked_by_the_same_rule():
 @pytest.fixture
 def routed(monkeypatch):
     calls = []
-    monkeypatch.setattr(docker_cli, "passthrough", lambda argv: calls.append(("exec", argv)) or 0)
+    monkeypatch.setattr(docker_cli, "passthrough", lambda argv, _: calls.append(("exec", argv)) or 0)
     monkeypatch.setattr(docker_cli.compose_cli, "main", lambda argv, _: calls.append(("compose", argv)) or 0)
-    monkeypatch.setattr(docker_cli, "Docker", lambda: FakeDocker(image_user="app"))
+    monkeypatch.setattr("dockscreen.runtime.Docker", lambda binary: FakeDocker(image_user="app"))
     return calls
 
 
@@ -405,7 +405,8 @@ def test_exec_as_me_reaches_docker_as_the_callers_ids(routed):
 
 
 def test_allow_me_before_the_subcommand_reaches_the_gate_and_not_docker(routed, monkeypatch):
-    monkeypatch.setattr(docker_cli, "Docker", lambda: FakeDocker(image_user=f"{os.getuid()}:{os.getgid()}"))
+    own = FakeDocker(image_user=f"{os.getuid()}:{os.getgid()}")
+    monkeypatch.setattr("dockscreen.runtime.Docker", lambda binary: own)
     assert docker_cli.main(["--allow-me", "run", "img"]) == 42
     docker_cli.main(["--allow-me", "compose", "up"])
     assert routed == [("compose", ["--allow-me", "up"])]
@@ -425,7 +426,7 @@ def test_start_is_checked_then_passed_through(routed, monkeypatch):
     docker_cli.main(["start", "-a", "c1"])
     assert routed == [("exec", ["start", "-a", "c1"])]
 
-    monkeypatch.setattr(docker_cli, "Docker", lambda: FakeDocker(image_user=""))
+    monkeypatch.setattr("dockscreen.runtime.Docker", lambda binary: FakeDocker(image_user=""))
     routed.clear()
     assert docker_cli.main(["container", "restart", "c1"]) == 1
     assert routed == []
@@ -450,7 +451,8 @@ def test_remote_daemons_are_refused(routed, monkeypatch, env, argv, capsys):
 
 
 def test_a_non_default_current_context_is_refused(routed, monkeypatch):
-    monkeypatch.setattr(docker_cli, "Docker", lambda: FakeDocker(image_user="app", context="rootless"))
+    rootless = FakeDocker(image_user="app", context="rootless")
+    monkeypatch.setattr("dockscreen.runtime.Docker", lambda binary: rootless)
     assert docker_cli.main(["run", "img"]) == 1
 
 
@@ -638,9 +640,9 @@ def test_create_with_an_unreadable_command_line_is_left_to_docker(routed):
 
 
 def test_a_config_file_that_cannot_be_trusted_stops_the_docker_wrapper_too(routed, monkeypatch, capsys):
-    def broken():
+    def broken(env, home, uid):
         raise config.ConfigError("/etc/dockscreen/config.toml: unknown key 'typo'")
-    monkeypatch.setattr(config, "current", broken)
+    monkeypatch.setattr(config, "load_current", broken)
     assert docker_cli.main(["ps"]) == 1
     assert routed == [] and "unknown key 'typo'" in capsys.readouterr().err
 

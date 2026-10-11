@@ -124,5 +124,5 @@ def test_config_is_loaded_without_env_resolution(monkeypatch):
         return subprocess.CompletedProcess(cmd, 0, "{}", "")
 
     monkeypatch.setattr(screen.subprocess, "run", fake_run)
-    screen.load_config(["-f", "a.yml"])
+    screen.load_config(["-f", "a.yml"], "docker")
     assert "--no-env-resolution" in seen[0] and seen[0][:4] == ["docker", "compose", "-f", "a.yml"]

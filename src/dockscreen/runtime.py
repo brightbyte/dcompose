@@ -7,11 +7,13 @@ caller's ids, the environment or the host's accounts on its own.
 import os
 from typing import NamedTuple
 
-from dockscreen import config, hostusers, idrules
+from dockscreen import config, hostusers, idrules, realdocker
+from dockscreen.dockerclient import Docker
 
 
 class Runtime(NamedTuple):
     settings: config.Config
+    docker: Docker       # the real docker
     accounts: object     # hostusers.HostAccounts
     subordinate: object  # idrules.Subordinate
     me: tuple            # the caller's real (uid, gid)
@@ -30,11 +32,14 @@ class Runtime(NamedTuple):
 
 def load_runtime():
     """The Runtime of this process. Raises config.ConfigError for a config file that cannot be trusted."""
+    env, home, me = os.environ, os.path.expanduser("~"), (os.getuid(), os.getgid())
+    settings = config.load_current(env, home, me[0])
     return Runtime(
-        settings=config.current(),
+        settings=settings,
+        docker=Docker(realdocker.locate(settings, env)),
         accounts=hostusers.HostAccounts(),
         subordinate=idrules.Subordinate(),
-        me=(os.getuid(), os.getgid()),
-        env=os.environ,
-        home=os.path.expanduser("~"),
+        me=me,
+        env=env,
+        home=home,
     )

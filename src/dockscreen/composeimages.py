@@ -36,8 +36,7 @@ class ImageError(Exception):
 
 
 class Tools(NamedTuple):
-    docker: object        # dockerclient.Docker
-    gate_ctx: object      # imagedecision.Context
+    gate_ctx: object      # imagedecision.Context, with the docker to use
     capture: Callable     # cmd -> CompletedProcess with text stdout
     run_child: Callable   # cmd -> exit code, with the terminal
 
@@ -138,7 +137,7 @@ def acquire(command, config, to_run, args, tools):
     for name in sorted(to_run):
         service = config["services"][name]
         image = image_name(config, name, service)
-        present = image_exists(tools.docker, image)
+        present = image_exists(tools.gate_ctx.docker, image)
         if "build" in service:
             wanted = service.get("pull_policy") == "build" or "--build" in args or not present
             if wanted and "--no-build" not in args:
@@ -173,14 +172,14 @@ def decide(config, to_run, tools):
         service = config["services"][name]
         image = image_name(config, name, service)
         platform = ["--platform", service["platform"]] if service.get("platform") else []
-        _, container = tools.docker.create(["--pull=never", *platform, "--", image])
+        _, container = tools.gate_ctx.docker.create(["--pull=never", *platform, "--", image])
         image_id = None
         if container is None:
             assessment = imagedecision.Assessment(
                 imagedecision.Kind.REFUSED, ["the image is not available locally"])
         else:
             try:
-                info = tools.docker.inspect_container(container)
+                info = tools.gate_ctx.docker.inspect_container(container)
                 image_id = info.get("Image")
                 assessment = imagedecision.assess(tools.gate_ctx, container, info, explicit=False,
                                          mounts=policy.has_host_mounts(service), reference=image,
@@ -188,7 +187,7 @@ def decide(config, to_run, tools):
             except (DockerError, ValueError, KeyError) as e:
                 assessment = imagedecision.Assessment(imagedecision.Kind.REFUSED, [str(e)])
             finally:
-                tools.docker.remove(container)
+                tools.gate_ctx.docker.remove(container)
         decisions[name] = Decision(image, assessment, image_id)
     return decisions
 

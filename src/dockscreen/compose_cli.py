@@ -18,7 +18,6 @@ from dockscreen import (
     ids,
     messages,
     policy,
-    realdocker,
     screen,
 )
 from dockscreen.commands import ALIASES, COMMANDS
@@ -45,10 +44,10 @@ GLOBAL_OPTS_WITH_VALUE = frozenset({
 })
 
 
-def forward(argv):
+def forward(argv, runtime):
     """Replace this process with `docker compose argv`, keeping tty, signals and exit code."""
+    binary = runtime.docker.binary
     try:
-        binary = realdocker.docker_bin()
         os.execvp(binary, [binary, "compose", *argv])
     except FileNotFoundError:
         messages.fatal(messages.DOCKER_NOT_FOUND)
@@ -67,7 +66,7 @@ def dispatch(argv, runtime=None):
     skipped, argv = flags.strip(argv, GLOBAL_OPTS_WITH_VALUE)
     if skipped:
         flags.banner()
-        return forward(argv)
+        return forward(argv, runtime or load_runtime())  # the config file names the real docker
 
     allow_me, argv = flags.strip(argv, GLOBAL_OPTS_WITH_VALUE, flags.ALLOW_ME)
     as_me, argv = flags.strip(argv, GLOBAL_OPTS_WITH_VALUE, flags.AS_ME)
@@ -97,7 +96,7 @@ def dispatch(argv, runtime=None):
     if wants_help(argv, idx):
         print_help()
 
-    forward(argv)
+    forward(argv, runtime)
 
 
 def rewrite_exec(kind, args, runtime):

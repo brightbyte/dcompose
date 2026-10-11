@@ -18,7 +18,6 @@ from dockscreen import (
     messages,
     patch,
     policy,
-    realdocker,
     screen,
     shellenv,
 )
@@ -44,7 +43,7 @@ HARDEN_HINT = "hint: the harden subcommand prints a compose override file with t
 @command("doctor")
 def doctor(global_args, args, runtime, allow_me=False):
     """Show the docker compose version that other commands are forwarded to."""
-    return subprocess.call([realdocker.docker_bin(), "compose", *global_args, "version", *args])
+    return subprocess.call([runtime.docker.binary, "compose", *global_args, "version", *args])
 
 
 @command("audit")

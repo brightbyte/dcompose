@@ -161,9 +161,9 @@ def test_exec_as_a_local_user_reaches_compose_as_numeric_ids(forwarded, monkeypa
 def test_a_config_file_that_cannot_be_trusted_stops_everything(forwarded, monkeypatch, capsys):
     from dockscreen import config
 
-    def broken():
+    def broken(env, home, uid):
         raise config.ConfigError("/home/me/.config/dockscreen/config.toml: /home/me is writable by others")
-    monkeypatch.setattr(config, "current", broken)
+    monkeypatch.setattr(config, "load_current", broken)
 
     assert compose_cli.main(["ps"]) == 1
     assert "refusing: config file /home/me/.config" in capsys.readouterr().err and forwarded == []
