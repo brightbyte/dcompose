@@ -190,9 +190,17 @@ def check_group_add(value, ctx):
     return problems
 
 
+SELINUX_HINT = "; if bind mounts fail on SELinux, add the :z or :Z mount option instead"
+
+
+def is_selinux_label(option):
+    return option.startswith(("label=", "label:"))
+
+
 def check_security_opt(value, ctx):
     options = [str(o) for o in value or []]
-    problems = [f"security_opt {o!r} is not allowed" for o in options if o not in NO_NEW_PRIVILEGES]
+    problems = [f"security_opt {o!r} is not allowed{SELINUX_HINT if is_selinux_label(o) else ''}"
+                for o in options if o not in NO_NEW_PRIVILEGES]
     if not any(o in NO_NEW_PRIVILEGES for o in options):
         problems.append("security_opt must include no-new-privileges:true")
     return problems

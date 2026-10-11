@@ -198,6 +198,8 @@ def test_services_in_the_same_project_may_be_referenced(project):
     (None, ["must include no-new-privileges"]),
     (["no-new-privileges:true", "seccomp=unconfined"], ["'seccomp=unconfined' is not allowed"]),
     (["apparmor=unconfined"], ["'apparmor=unconfined' is not allowed", "must include no-new-privileges"]),
+    (["no-new-privileges:true", "label=disable"], ["'label=disable' is not allowed", "the :z or :Z mount option"]),
+    (["no-new-privileges:true", "label:disable"], ["'label:disable' is not allowed", "the :z or :Z mount option"]),
 ])
 def test_no_new_privileges_is_required(project, security_opt, reasons):
     config = service()
@@ -229,6 +231,18 @@ def test_cap_drop_all_is_required(project, cap_drop, ok):
 
 def bind(source):
     return {"type": "bind", "source": str(source), "target": "/x"}
+
+
+@pytest.mark.parametrize("selinux", ["z", "Z"])
+def test_selinux_relabel_option_on_a_bind_mount_is_allowed(project, selinux):
+    # Compose normalises `./data:/data:z` to bind.selinux; it replaces label=disable.
+    mount = {**bind(project), "bind": {"selinux": selinux}}
+    assert problems_for(project, volumes=[mount]) == []
+
+
+def test_selinux_relabel_does_not_allow_a_bind_mount_outside_the_project(project):
+    mount = {**bind("/etc"), "bind": {"selinux": "Z"}}
+    assert_refused(problems_for(project, volumes=[mount]), "bind mount '/etc' is outside")
 
 
 def test_bind_mount_outside_project_is_refused(project):
