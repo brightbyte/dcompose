@@ -12,11 +12,8 @@ import copy
 import json
 from typing import NamedTuple
 
-from dockscreen import hostusers, policy
-
-CAP_DROP = "ALL"
-SECURITY_OPT = "no-new-privileges:true"
-
+from dockscreen import hostusers, ids, policy
+from dockscreen.policy import CAP_DROP, SECURITY_OPT
 
 class Addition(NamedTuple):
     service: str
@@ -39,7 +36,7 @@ def apply(config, accounts=None):
             service["cap_drop"] = [*(service.get("cap_drop") or []), CAP_DROP]
             additions.append(Addition(
                 name, "cap_drop", f"cap_drop {reason}; dockscreen adds cap_drop: {json.dumps([CAP_DROP])}"))
-        if not any(str(o) in policy.NO_NEW_PRIVILEGES for o in service.get("security_opt") or []):
+        if not policy.has_no_new_privileges(service.get("security_opt")):
             reason = "is not set" if not service.get("security_opt") else "does not include no-new-privileges"
             service["security_opt"] = [*(service.get("security_opt") or []), SECURITY_OPT]
             additions.append(Addition(
@@ -79,7 +76,7 @@ def resolve_spec(spec, accounts):
     A uid alone stays alone: the policy refuses it rather than guess a group.
     """
     user, has_group, group = str(spec).partition(":")
-    account = accounts.user(user) if user and policy.parse_id(user) is None else None
+    account = accounts.user(user) if user and ids.parse_id(user) is None else None
     uid = str(account[0]) if account else user
     if has_group:
         gid = resolve_group(group, accounts)
@@ -91,7 +88,7 @@ def resolve_spec(spec, accounts):
 
 
 def resolve_group(group, accounts):
-    if policy.parse_id(group) is not None:
+    if ids.parse_id(group) is not None:
         return group
     gid = accounts.group(str(group))
     return group if gid is None else str(gid)

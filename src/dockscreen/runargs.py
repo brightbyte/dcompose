@@ -9,7 +9,7 @@ daemon's.
 
 from typing import NamedTuple
 
-from dockscreen import hostusers
+from dockscreen import flags, hostusers, ids
 
 # Long options of `docker run`/`create` that take a value in the next argument.
 LONG_VALUE_FLAGS = frozenset({
@@ -31,13 +31,6 @@ LONG_VALUE_FLAGS = frozenset({
 SHORT_VALUE_FLAGS = frozenset("acehlmpuvw")
 
 
-# Not docker options: replaced by `--user=uid:gid` before docker sees them.
-AS_ME_FLAG = "--as-me"  # the caller's own uid:gid; implies --allow-me
-AS_FLAG = "--as"        # a local user by name, resolved on this host
-# Not a docker option either, and dropped: the caller's own ids may be the image's user.
-ALLOW_ME_FLAG = "--allow-me"
-
-
 class ParseError(Exception):
     pass
 
@@ -55,7 +48,7 @@ class ParsedRun(NamedTuple):
 
 class _State:
     def __init__(self, current_user, resolve):
-        self.current_user = f"{current_user[0]}:{current_user[1]}"
+        self.current_user = ids.format_user(current_user)
         self.resolve = resolve
         self.notices = []
         self.kept = []
@@ -108,12 +101,12 @@ def parse_long(args, i, state):
     """Handle one --option; returns the index after it and its value."""
     token = args[i]
     name, has_value, value = token.partition("=")
-    if name == AS_ME_FLAG:
+    if name == flags.AS_ME:
         state.user_given = state.allow_me = True
         state.kept.append(f"--user={state.current_user}")
-    elif name == ALLOW_ME_FLAG:
+    elif name == flags.ALLOW_ME:  # not a docker option: dropped
         state.allow_me = True
-    elif name == AS_FLAG:
+    elif name == flags.AS:
         if not has_value:
             i += 1
             value = value_at(args, i, name)

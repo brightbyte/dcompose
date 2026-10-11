@@ -18,7 +18,7 @@ import tomllib
 from types import MappingProxyType
 from typing import NamedTuple
 
-from dockscreen import images, messages
+from dockscreen import ids, images, messages
 
 SYSTEM_FILE = "/etc/dockscreen/config.toml"
 KEYS = frozenset({"default_user", "nobody_range", "mount_dirs", "docker", "image_users"})
@@ -150,10 +150,10 @@ def build(merged, image_users):
 
 def user_value(path, key, value):
     """(uid, gid) from "uid:gid"; names are not resolved here, both must be numbers."""
-    user, colon, group = value.partition(":") if isinstance(value, str) else ("", "", "")
-    if not (colon and is_id(user) and is_id(group)):
+    user = ids.parse_user(value) if isinstance(value, str) else None
+    if user is None:
         raise ConfigError(f"{path}: {key} must be \"uid:gid\" with numeric ids, not {value!r}")
-    return int(user), int(group)
+    return user
 
 
 def id_range(path, value):
@@ -174,7 +174,3 @@ def repository_key(path, name):
     if tag or digest:
         raise ConfigError(f"{path}: image_users {name!r} names a repository; leave out the tag or digest")
     return repository
-
-
-def is_id(text):
-    return text.isascii() and text.isdigit()

@@ -7,17 +7,14 @@ the result with policy.check_config reports what is left.
 import copy
 import os
 
-from dockscreen import policy
+from dockscreen import ids, policy
 
 # What fix puts into `user`: the caller's own ids, which dockscreen exports (ids.py) and allows only with
 # --allow-me. A literal would only fit the person who ran harden.
 USER_TEMPLATE = "${UID}:${GID}"
 
 # Keys whose removal is a safe fix.
-REMOVABLE_SERVICE_KEYS = (
-    "privileged", "cap_add", "devices", "device_cgroup_rules", "gpus", "cgroup_parent", "external_links",
-    "runtime", *policy.NAMESPACE_KEYS,
-)
+REMOVABLE_SERVICE_KEYS = (*policy.FORBIDDEN_KEYS, "runtime", *policy.NAMESPACE_KEYS)
 
 
 def fix_config(config, ctx):
@@ -39,9 +36,9 @@ def fix_config(config, ctx):
         if not service["group_add"]:
             del service["group_add"]
         if policy.check_security_opt(service.get("security_opt"), ctx):
-            service["security_opt"] = ["no-new-privileges:true"]
+            service["security_opt"] = [policy.SECURITY_OPT]
         if policy.check_cap_drop(service.get("cap_drop"), ctx):
-            service["cap_drop"] = ["ALL"]
+            service["cap_drop"] = [policy.CAP_DROP]
         for key in REMOVABLE_SERVICE_KEYS:
             service.pop(key, None)
         if "volumes_from" in service:
@@ -59,7 +56,7 @@ def resolve_user_template(config, ctx):
     resolved = copy.deepcopy(config)
     for service in resolved.get("services", {}).values():
         if service.get("user") == USER_TEMPLATE:
-            service["user"] = "{}:{}".format(*ctx.ids.me)
+            service["user"] = ids.format_user(ctx.ids.me)
     return resolved
 
 

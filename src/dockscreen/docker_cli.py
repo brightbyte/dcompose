@@ -10,6 +10,7 @@ import sys
 from dockscreen import (
     cli,
     config,
+    flags,
     gate,
     hostusers,
     idrules,
@@ -17,7 +18,6 @@ from dockscreen import (
     messages,
     realdocker,
     screen,
-    skipflag,
 )
 from dockscreen.dockerclient import Docker
 
@@ -38,12 +38,12 @@ def main(argv=None):
 
 
 def dispatch(argv):
-    skipped, argv = skipflag.strip(argv, DOCKER_OPTS_WITH_VALUE)
+    skipped, argv = flags.strip(argv, DOCKER_OPTS_WITH_VALUE)
     if skipped:
-        skipflag.banner()
+        flags.banner()
         return passthrough(argv)
 
-    allow_me, argv = skipflag.strip(argv, DOCKER_OPTS_WITH_VALUE, cli.ALLOW_ME_FLAG)
+    allow_me, argv = flags.strip(argv, DOCKER_OPTS_WITH_VALUE, flags.ALLOW_ME)
     config.current()  # a config file that cannot be trusted stops everything, before any docker runs
 
     idx = cli.find_subcommand(argv, DOCKER_OPTS_WITH_VALUE)
@@ -54,7 +54,7 @@ def dispatch(argv):
         if idx != 0:
             messages.notice("docker options before `compose` are not supported")
             return 1
-        return cli.main([*([cli.ALLOW_ME_FLAG] if allow_me else []), *argv[1:]])
+        return cli.main([*([flags.ALLOW_ME] if allow_me else []), *argv[1:]])
 
     sub, end = argv[idx], idx
     if sub == "container" and idx + 1 < len(argv) and argv[idx + 1] in GATED - {"audit"}:

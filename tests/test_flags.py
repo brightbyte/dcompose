@@ -1,6 +1,6 @@
 import pytest
 
-from dockscreen import cli, docker_cli, skipflag
+from dockscreen import cli, docker_cli, flags
 
 FLAG = "--skip-screening"
 
@@ -16,11 +16,11 @@ FLAG = "--skip-screening"
     ([], False, []),
 ])
 def test_only_a_global_option_counts(argv, found, rest):
-    assert skipflag.strip(argv, cli.GLOBAL_OPTS_WITH_VALUE) == (found, rest)
+    assert flags.strip(argv, cli.GLOBAL_OPTS_WITH_VALUE) == (found, rest)
 
 
 def test_banner_goes_to_stderr(capsys):
-    skipflag.banner()
+    flags.banner()
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "screening is disabled" in captured.err and "no defaults are added" in captured.err

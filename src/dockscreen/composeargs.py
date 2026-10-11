@@ -15,7 +15,7 @@ if no user had been chosen.
 import os
 from typing import NamedTuple
 
-from dockscreen import hostusers
+from dockscreen import flags, hostusers, ids
 
 # Options of `docker compose run` and `exec` that take a value in the next argument.
 VALUE_FLAGS = {
@@ -29,10 +29,6 @@ VALUE_FLAGS = {
         "--detach-keys", "-e", "--env", "--env-file", "-u", "--user", "-w", "--workdir",
     }),
 }
-AS_FLAG = "--as"
-AS_ME_FLAG = "--as-me"
-AS_ME_MESSAGE = ("--as-me goes after run or exec, before the service; for up, give --allow-me before the "
-                 "subcommand, and user: \"${UID}:${GID}\" to the services that should run as you")
 
 
 class Parsed(NamedTuple):
@@ -60,21 +56,20 @@ def parse(subcommand, args, resolve=None, current_user=None):
         if token == "--":
             service = args[i + 1] if i + 1 < len(args) else None
             return Parsed(service, user_given, [*kept, *args[i:]], notices)
-        if token == AS_ME_FLAG:
-            uid, gid = current_user or (os.getuid(), os.getgid())
-            kept.append(f"--user={uid}:{gid}")
+        if token == flags.AS_ME:
+            kept.append(f"--user={ids.format_user(current_user or (os.getuid(), os.getgid()))}")
             user_given = True
             i += 1
             continue
         if token.startswith("--"):
             name, has_value, value = token.partition("=")
-            if (name in value_flags or name == AS_FLAG) and not has_value:
+            if (name in value_flags or name == flags.AS) and not has_value:
                 i += 1
                 value = args[i] if i < len(args) else ""
             if name == "--user":
                 hostusers.require_numeric(value)
                 user_given = True
-            elif name == AS_FLAG:
+            elif name == flags.AS:
                 resolved, messages = resolve(value)
                 notices += messages
                 user_given = True

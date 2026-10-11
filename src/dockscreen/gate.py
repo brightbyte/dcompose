@@ -26,7 +26,7 @@ import os
 from typing import NamedTuple
 
 from dockscreen import config as configuration
-from dockscreen import hostusers, images, imageuser, messages, runargs
+from dockscreen import hostusers, ids, images, imageuser, messages, runargs
 from dockscreen.dockerclient import DockerError
 from dockscreen.text import printable
 
@@ -118,15 +118,14 @@ def assess(ctx, container, info, explicit=None, mounts=None, reference=None, bui
 
 def default_user_spec(ctx):
     """The `uid:gid` that replaces an image's root user."""
-    uid, gid = ctx.settings().default_user
-    return f"{uid}:{gid}"
+    return ids.format_user(ctx.settings().default_user)
 
 
 def pinned_user(ctx, assessment):
     """The `uid:gid` a fallback, configured or accepted image user runs as, spelled as numbers."""
     if assessment.kind == "fallback":
         return default_user_spec(ctx)
-    return f"{assessment.identity.uid}:{assessment.identity.gid}"
+    return ids.format_user((assessment.identity.uid, assessment.identity.gid))
 
 
 def root_default_notice(ctx):

@@ -12,13 +12,13 @@ from dockscreen import (
     composeargs,
     composerun,
     config,
+    flags,
     hostusers,
     ids,
     messages,
     policy,
     realdocker,
     screen,
-    skipflag,
 )
 from dockscreen.commands import ALIASES, COMMANDS
 
@@ -28,8 +28,6 @@ RUNTIME_SUBCOMMANDS = frozenset({"up", "create", "run", "watch", "scale", "alpha
 # Subcommands that only build: they get the build-related checks, not the runtime policy.
 BUILD_SUBCOMMANDS = frozenset({"build", "bake"})
 SCREENED_SUBCOMMANDS = RUNTIME_SUBCOMMANDS | BUILD_SUBCOMMANDS
-# dockscreen's own options before the subcommand: the caller's ids may be used (see idrules).
-ALLOW_ME_FLAG = "--allow-me"
 
 # Global `docker compose` options that consume the following token as their value.
 # Needed to tell `-f foo.yml up` (subcommand "up") from `-f up` (a value).
@@ -79,15 +77,15 @@ def main(argv=None):
 
 
 def dispatch(argv):
-    skipped, argv = skipflag.strip(argv, GLOBAL_OPTS_WITH_VALUE)
+    skipped, argv = flags.strip(argv, GLOBAL_OPTS_WITH_VALUE)
     if skipped:
-        skipflag.banner()
+        flags.banner()
         return forward(argv)
 
-    allow_me, argv = skipflag.strip(argv, GLOBAL_OPTS_WITH_VALUE, ALLOW_ME_FLAG)
-    as_me, argv = skipflag.strip(argv, GLOBAL_OPTS_WITH_VALUE, composeargs.AS_ME_FLAG)
+    allow_me, argv = flags.strip(argv, GLOBAL_OPTS_WITH_VALUE, flags.ALLOW_ME)
+    as_me, argv = flags.strip(argv, GLOBAL_OPTS_WITH_VALUE, flags.AS_ME)
     if as_me:
-        messages.notice(composeargs.AS_ME_MESSAGE)
+        messages.notice(flags.AS_ME_MESSAGE)
         return 2
     config.current()  # a config file that cannot be trusted stops everything, before any docker runs
     ids.export(os.environ)
@@ -157,10 +155,10 @@ def print_help():
         "the project directory, runs as root, as an account of this host or (with mounts) outside the",
         "nobody range, or asks for extra privileges. They run the project from the checked config, with",
         "cap_drop ALL and no-new-privileges added to every service that lacks them.",
-        f"{ALLOW_ME_FLAG}, before the subcommand, allows services to run as you.",
+        f"{flags.ALLOW_ME}, before the subcommand, allows services to run as you.",
         f"{', '.join(sorted(BUILD_SUBCOMMANDS))} refuse builds that read outside the project, use the",
         "host network, run privileged or forward your SSH agent. See `dockscreen audit`.",
-        f"{skipflag.FLAG}, before the subcommand, turns all of this off.",
+        f"{flags.SKIP_SCREENING}, before the subcommand, turns all of this off.",
         "",
         "dockscreen commands:",
     ]

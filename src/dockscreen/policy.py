@@ -19,9 +19,16 @@ realpath resolution.
 import os
 from typing import NamedTuple
 
-from dockscreen import idrules
+from dockscreen import idrules, ids
 
 NO_NEW_PRIVILEGES = frozenset({"no-new-privileges", "no-new-privileges:true", "no-new-privileges=true"})
+# What every service must have; hardening adds them where they are missing.
+CAP_DROP = "ALL"
+SECURITY_OPT = "no-new-privileges:true"
+# Service keys that are refused whenever they carry a value; autofix removes them.
+FORBIDDEN_KEYS = (
+    "privileged", "cap_add", "devices", "device_cgroup_rules", "gpus", "cgroup_parent", "external_links",
+)
 # A tuple: the order of the checks is the order of the problems reported.
 NAMESPACE_KEYS = ("pid", "ipc", "uts", "userns_mode", "cgroup", "network_mode")
 
@@ -151,12 +158,6 @@ def has_host_mounts(service):
     return binds or any(service.get(key) for key in others)
 
 
-def parse_id(value):
-    """The numeric id, or None."""
-    text = str(value)
-    return int(text) if text.isascii() and text.isdigit() else None
-
-
 def not_a_name(kind, value):
     """For a name that is still a name: hardening resolves every name that exists on this host."""
     return (f"{kind} {value!r} does not exist on this host (names are resolved on this host, "
@@ -168,7 +169,7 @@ def check_user(value, ctx):
     if not value:
         return ["user is not set, the image default may be root"]
     user, has_group, group = str(value).partition(":")
-    uid, gid = parse_id(user), parse_id(group)
+    uid, gid = ids.parse_id(user), ids.parse_id(group)
     if uid is None:
         return [not_a_name("user", user)]
     if not has_group:
@@ -182,7 +183,7 @@ def check_user(value, ctx):
 def check_group_add(value, ctx):
     problems = []
     for extra in value or []:
-        gid = parse_id(extra)
+        gid = ids.parse_id(extra)
         if gid is None:
             problems.append(not_a_name("group_add", extra))
         elif problem := ctx.ids.problem("gid", gid, ctx.mounts):
@@ -201,14 +202,18 @@ def check_security_opt(value, ctx):
     options = [str(o) for o in value or []]
     problems = [f"security_opt {o!r} is not allowed{SELINUX_HINT if is_selinux_label(o) else ''}"
                 for o in options if o not in NO_NEW_PRIVILEGES]
-    if not any(o in NO_NEW_PRIVILEGES for o in options):
-        problems.append("security_opt must include no-new-privileges:true")
+    if not has_no_new_privileges(options):
+        problems.append(f"security_opt must include {SECURITY_OPT}")
     return problems
 
 
+def has_no_new_privileges(options):
+    return any(str(o) in NO_NEW_PRIVILEGES for o in options or [])
+
+
 def check_cap_drop(value, ctx):
-    if "ALL" not in {str(c).upper() for c in value or []}:
-        return ["cap_drop must include ALL"]
+    if CAP_DROP not in {str(c).upper() for c in value or []}:
+        return [f"cap_drop must include {CAP_DROP}"]
     return []
 
 
@@ -341,15 +346,9 @@ def check_hooks(key):
 SERVICE_CHECKS = {
     "user": check_user,
     "group_add": check_group_add,
-    "privileged": forbidden("privileged"),
-    "cap_add": forbidden("cap_add"),
     "cap_drop": check_cap_drop,
     "security_opt": check_security_opt,
-    "devices": forbidden("devices"),
-    "device_cgroup_rules": forbidden("device_cgroup_rules"),
-    "gpus": forbidden("gpus"),
-    "cgroup_parent": forbidden("cgroup_parent"),
-    "external_links": forbidden("external_links"),
+    **{key: forbidden(key) for key in FORBIDDEN_KEYS},
     "runtime": check_runtime,
     **{key: check_namespace(key) for key in NAMESPACE_KEYS},
     "volumes": check_mounts,

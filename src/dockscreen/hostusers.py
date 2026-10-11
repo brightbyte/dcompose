@@ -8,6 +8,8 @@ name of an account on this host and turns it into ids before docker sees it.
 import grp
 import pwd
 
+from dockscreen import ids
+
 
 class UserError(Exception):
     """A user given on the command line cannot be used."""
@@ -26,28 +28,23 @@ def require_numeric(spec, alternatives=DOCKER_ALTERNATIVES):
     A uid alone would leave the group to the image: docker takes it, and the supplementary groups,
     from the image's own passwd and group files, which can say root.
     """
-    user, colon, group = spec.partition(":")
-    if _is_id(user) and colon and _is_id(group):
+    if ids.parse_user(spec):
         return spec
-    hint = "; give the group too, as uid:gid" if _is_id(user) and not colon else ""
+    hint = "; give the group too, as uid:gid" if ids.is_id(spec) else ""
     raise UserError(f"--user takes numeric ids as uid:gid, not {spec!r}{hint}{alternatives}")
 
 
 def resolve_account(name, getpwnam=pwd.getpwnam):
     """(`uid:gid`, messages) for the account called name on this host, with its primary group."""
-    if not name or ":" in name or _is_id(name):
+    if not name or ":" in name or ids.is_id(name):
         raise UserError(f"--as takes the name of a local user, not {name!r}; use --user for ids")
     try:
         account = getpwnam(name)
     except KeyError:
         raise UnknownUser(
             f"user {name!r} does not exist on this host; use --user with a numeric id") from None
-    return (f"{account.pw_uid}:{account.pw_gid}",
+    return (ids.format_user((account.pw_uid, account.pw_gid)),
             [f"Resolving user {name} to uid {account.pw_uid}, gid {account.pw_gid}"])
-
-
-def _is_id(text):
-    return text.isascii() and text.isdigit()
 
 
 class Accounts:

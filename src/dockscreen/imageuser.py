@@ -9,9 +9,6 @@ import grp
 import pwd
 from typing import NamedTuple
 
-NOBODY = 65534
-
-
 class Identity(NamedTuple):
     uid: int
     gid: int
