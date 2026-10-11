@@ -98,9 +98,18 @@ def resolved_message(what, before, after):
             f"dockscreen resolves it to {json.dumps(after)}")
 
 
+DEFAULT_KEYS = ("cap_drop", "security_opt")
+
+
 def describe(additions):
-    """One line per addition: what was missing and what dockscreen fills in."""
-    return [f"service {a.service}: {a.message}" for a in additions]
+    """Lines for an audit: one per name resolved on this host, and one for the defaults, naming the
+    services that lack them. The defaults are the same for every service, so a line each is noise."""
+    lines = [f"service {a.service}: {a.message}" for a in additions if a.key not in DEFAULT_KEYS]
+    services = list(dict.fromkeys(a.service for a in additions if a.key in DEFAULT_KEYS))
+    if services:
+        lines.append(f'dockscreen adds cap_drop: ["{CAP_DROP}"] and security_opt: ["{SECURITY_OPT}"] where '
+                     f"they are missing, in services {', '.join(services)}")
+    return lines
 
 
 def defaults_note():

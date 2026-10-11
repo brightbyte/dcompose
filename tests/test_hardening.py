@@ -16,8 +16,8 @@ def test_missing_defaults_are_added_and_described():
     web = hardened["services"]["web"]
     assert web["cap_drop"] == ["ALL"] and web["security_opt"] == ["no-new-privileges:true"]
     assert hardening.describe(additions) == [
-        'service web: cap_drop is not set; dockscreen adds cap_drop: ["ALL"]',
-        'service web: security_opt is not set; dockscreen adds security_opt: ["no-new-privileges:true"]',
+        'dockscreen adds cap_drop: ["ALL"] and security_opt: ["no-new-privileges:true"] where they are '
+        "missing, in services web",
     ]
     assert hardening.summary(additions) == "hardening defaults added: web (cap_drop, security_opt)"
 
@@ -29,10 +29,10 @@ def test_existing_entries_are_kept_and_only_the_missing_one_is_added():
     web = hardened["services"]["web"]
     assert web["cap_drop"] == ["NET_RAW", "ALL"]
     assert web["security_opt"] == ["seccomp=unconfined", "no-new-privileges:true"]
-    assert hardening.describe(additions) == [
-        'service web: cap_drop does not include ALL; dockscreen adds cap_drop: ["ALL"]',
-        ('service web: security_opt does not include no-new-privileges; '
-         'dockscreen adds security_opt: ["no-new-privileges:true"]'),
+    assert [(a.key, a.message) for a in additions] == [
+        ("cap_drop", 'cap_drop does not include ALL; dockscreen adds cap_drop: ["ALL"]'),
+        ("security_opt", 'security_opt does not include no-new-privileges; '
+                         'dockscreen adds security_opt: ["no-new-privileges:true"]'),
     ]
 
 
@@ -68,7 +68,7 @@ def test_audit_reports_the_additions_and_hints_at_harden(monkeypatch, capsys, tm
 
     captured = capsys.readouterr()
     assert "audit passed" in captured.err
-    assert 'service web: cap_drop is not set; dockscreen adds cap_drop: ["ALL"]' in captured.out
+    assert 'dockscreen adds cap_drop: ["ALL"] and security_opt' in captured.out
     assert "the harden subcommand prints a compose override" in captured.out
 
 
@@ -115,15 +115,13 @@ def test_harden_writes_only_what_is_needed_on_top_of_the_defaults(monkeypatch, c
     assert '"db"' not in body       # a service with nothing to fix is not mentioned
 
 
-def test_the_audit_still_reports_every_service(monkeypatch, capsys, tmp_path):
+def test_the_audit_names_every_service_that_gets_the_defaults_in_one_line(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(screen, "inspect", lambda global_args, runtime: (two_services(), str(tmp_path)))
 
     commands.audit([], [], runtime())
 
-    out = capsys.readouterr().out
-    for service in ("web", "db"):
-        assert f'service {service}: cap_drop is not set; dockscreen adds cap_drop: ["ALL"]' in out
-        assert f"service {service}: security_opt is not set" in out
+    lines = [line for line in capsys.readouterr().out.splitlines() if "cap_drop" in line]
+    assert len(lines) == 1 and lines[0].endswith("where they are missing, in services web, db")
 
 
 def test_fix_is_an_alias_of_harden_and_is_listed_once_in_the_help():
