@@ -22,6 +22,7 @@ be rewritten. `create` only gets the hardening defaults; its container is
 checked when it is started. `audit` predicts the outcome for an image.
 """
 
+import enum
 import os
 from typing import NamedTuple
 
@@ -61,11 +62,33 @@ class Context(NamedTuple):
         return self.config or configuration.current()
 
 
+class Kind(enum.StrEnum):
+    EXPLICIT = "explicit"      # the command line chose the user: trusted, not checked
+    CONFIGURED = "configured"  # the config file names a user for the image's repository
+    OK = "ok"                  # the image's own user, which the id rules accept
+    FALLBACK = "fallback"      # the image would run as root: the default user instead
+    REFUSED = "refused"
+
+
 class Assessment(NamedTuple):
-    kind: str            # explicit, configured, ok, fallback or refused
+    kind: Kind
     problems: list
     identity: imageuser.Identity | None = None
     note: str | None = None  # an image_users entry for the repository that does not apply, and why
+
+    @property
+    def refused(self):
+        return self.kind is Kind.REFUSED
+
+    @property
+    def pins_user(self):
+        """Whether dockscreen decided the user, and runs the image as it, spelled as numbers."""
+        return self.kind in (Kind.CONFIGURED, Kind.OK, Kind.FALLBACK)
+
+    @property
+    def replaces_image_user(self):
+        """Whether the user dockscreen decided differs from the one the image chose."""
+        return self.kind in (Kind.CONFIGURED, Kind.FALLBACK)
 
 
 def has_host_mounts(info):
@@ -94,27 +117,27 @@ def assess(ctx, container, info, explicit=None, mounts=None, reference=None, bui
     if explicit is None:
         explicit = spec != (image["Config"].get("User") or "")
     if explicit:
-        return Assessment("explicit", [])  # trusted: the person typing the command chose it
+        return Assessment(Kind.EXPLICIT, [])  # trusted: the person typing the command chose it
 
     match = images.configured_user(ctx.settings(), reference or info["Config"].get("Image") or "",
                                    image.get("RepoDigests"), built)
     if match.user:
-        return Assessment("configured", [], imageuser.Identity(*match.user, ()))
+        return Assessment(Kind.CONFIGURED, [], imageuser.Identity(*match.user, ()))
 
     passwd = ctx.docker.read_file(container, "/etc/passwd") or ""
     groups = ctx.docker.read_file(container, "/etc/group") or ""
     try:
         identity = imageuser.resolve(spec, passwd, groups)
     except ValueError as e:
-        return Assessment("refused", [str(e)], note=match.problem)
+        return Assessment(Kind.REFUSED, [str(e)], note=match.problem)
     if imageuser.involves_root(identity):
-        return Assessment("fallback", [], identity, match.problem)
+        return Assessment(Kind.FALLBACK, [], identity, match.problem)
     if mounts is None:
         mounts = has_host_mounts(info)
     problems = ctx.ids.problems(identity.uid, identity.gid, identity.supplementary, mounts=mounts)
     if problems:
-        return Assessment("refused", [f"the image's {p}" for p in problems], identity, match.problem)
-    return Assessment("ok", [], identity, match.problem)
+        return Assessment(Kind.REFUSED, [f"the image's {p}" for p in problems], identity, match.problem)
+    return Assessment(Kind.OK, [], identity, match.problem)
 
 
 def default_user_spec(ctx):
@@ -124,7 +147,7 @@ def default_user_spec(ctx):
 
 def pinned_user(ctx, assessment):
     """The `uid:gid` a fallback, configured or accepted image user runs as, spelled as numbers."""
-    if assessment.kind == "fallback":
+    if assessment.kind is Kind.FALLBACK:
         return default_user_spec(ctx)
     return ids.format_user((assessment.identity.uid, assessment.identity.gid))
 
@@ -155,11 +178,11 @@ def run(ctx, args):
         return created
     container, info, assessment = created
 
-    if assessment.kind in ("fallback", "configured", "ok"):
+    if assessment.pins_user:
         # All are re-created with the user spelled as numbers: the runtime then has nothing of the
         # image's to resolve, whatever its passwd and group files say.
         ctx.docker.remove(container)
-        if assessment.kind == "fallback":
+        if assessment.kind is Kind.FALLBACK:
             messages.notice(fallback_notice(ctx, parsed.image))
         created = create_checked(ctx, parsed, [f"--user={pinned_user(ctx, assessment)}"])
         if isinstance(created, int):
@@ -196,11 +219,11 @@ def create_checked(ctx, parsed, extra):
     try:
         info = ctx.docker.inspect_container(container)
         problems = verify_split(info, parsed)
-        assessment = Assessment("refused", problems) if problems else assess(
+        assessment = Assessment(Kind.REFUSED, problems) if problems else assess(
             ctx, container, info, explicit=parsed.user_given or bool(extra), reference=parsed.image)
     except (DockerError, ValueError, KeyError) as e:
-        assessment = Assessment("refused", [str(e)])
-    if assessment.kind == "refused":
+        assessment = Assessment(Kind.REFUSED, [str(e)])
+    if assessment.refused:
         ctx.docker.remove(container)
         return messages.refuse(explain(assessment))
     return container, info, assessment
@@ -240,7 +263,7 @@ def audit(ctx, args):
         outcomes = [assess(ctx, container, info, explicit=parsed.user_given, mounts=mounts, reference=image)
                     for mounts in (False, True)]
     except (DockerError, ValueError, KeyError) as e:
-        outcomes = [Assessment("refused", [str(e)])] * 2
+        outcomes = [Assessment(Kind.REFUSED, [str(e)])] * 2
     finally:
         ctx.docker.remove(container)
 
@@ -251,7 +274,7 @@ def report_assessment(ctx, image, outcomes):
     """Print what `docker run` would do without and with bind mounts. Exit status 1 if refused."""
     name = printable(image)
     without = outcomes[0]
-    if without.kind == "explicit":
+    if without.kind is Kind.EXPLICIT:
         print(f"image {name}: the user is set on the command line; the image's own user is not checked")
     else:
         texts = [describe_outcome(ctx, a) for a in outcomes]
@@ -262,20 +285,20 @@ def report_assessment(ctx, image, outcomes):
             print(f"image {name}, with bind mounts or devices: {texts[1]}")
         if without.note:
             print(f"  note: {printable(without.note)}")
-    if any(a.kind == "refused" for a in outcomes):
+    if any(a.refused for a in outcomes):
         print(f"  {CHOOSE_HINT}")
     else:
         print("docker run also adds " + " ".join(DEFAULTS) + "; later options override them")
-    return 1 if any(a.kind == "refused" for a in outcomes) else 0
+    return 1 if any(a.refused for a in outcomes) else 0
 
 
 def describe_outcome(ctx, assessment):
     who = imageuser.describe(assessment.identity, ctx.local) if assessment.identity else None
-    if assessment.kind == "ok":
+    if assessment.kind is Kind.OK:
         return f"runs as {who}; accepted"
-    if assessment.kind == "configured":
+    if assessment.kind is Kind.CONFIGURED:
         return f"runs as {pinned_user(ctx, assessment)}, the user the config file sets for its repository"
-    if assessment.kind == "fallback":
+    if assessment.kind is Kind.FALLBACK:
         return (f"would run as {who}; docker run would run it as the default user "
                 f"({default_user_spec(ctx)}) instead")
     reasons = "; ".join(printable(p) for p in assessment.problems)
@@ -308,7 +331,7 @@ def check_existing(ctx, args):
         try:
             info = ctx.docker.inspect_container(ref)
             assessment = assess(ctx, info["Id"], info)
-            if assessment.kind in ("fallback", "configured"):
+            if assessment.replaces_image_user:
                 user = pinned_user(ctx, assessment)
                 problems.append(f"{ref}: its image's user would be replaced by {user}, which an existing "
                                 f"container cannot be; recreate it with --user {user}")

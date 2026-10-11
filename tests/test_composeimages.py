@@ -7,6 +7,7 @@ from fakes import FakeImages, make_tools, rules
 from dockscreen import autofix, composeimages, gate, policy
 from dockscreen import config as configuration
 from dockscreen.dockerclient import DockerError
+from dockscreen.gate import Kind
 
 NOBODY = "65534:65534"
 COMMAND = ["docker", "compose", "-f", "/gen/compose-0.yaml"]  # what prepare is given; only the tail matters
@@ -154,19 +155,19 @@ def test_first_difference_names_the_path(expected, actual, where):
 # --- deciding about the images ---------------------------------------------------
 
 @pytest.mark.parametrize("image_user, kind", [
-    ("app", "ok"),            # 100000:100001, high and unknown to the host
-    ("", "fallback"),         # no USER: root
-    ("root", "fallback"),
-    ("0:0", "fallback"),
-    ("web", "refused"),       # 1000: low, and the host has it
-    ("ghost", "refused"),     # not defined in the image
+    ("app", Kind.OK),          # 100000:100001, high and unknown to the host
+    ("", Kind.FALLBACK),       # no USER: root
+    ("root", Kind.FALLBACK),
+    ("0:0", Kind.FALLBACK),
+    ("web", Kind.REFUSED),     # 1000: low, and the host has it
+    ("ghost", Kind.REFUSED),   # not defined in the image
 ])
 def test_the_images_own_user_is_judged_as_docker_run_does(image_user, kind):
     prepared, _, images = prepare(project(), FakeImages(users={"web:1": image_user}))
 
     assessment = prepared.decisions["web"].assessment
-    assert assessment.kind == kind
-    assert (prepared.problems != []) == (kind == "refused")
+    assert assessment.kind is kind
+    assert (prepared.problems != []) == (kind is Kind.REFUSED)
     assert [call for call in images.calls if call[0] == "remove"] == [("remove", "c1")]  # nothing is left
 
 
@@ -313,7 +314,7 @@ def test_which_services_reach_host_files(fields, mounts):
 
 def test_with_mounts_an_image_user_outside_the_nobody_range_is_refused():
     prepared, _, _ = prepare(project(web=BIND), FakeImages(users={"web:1": "app"}))
-    assert prepared.decisions["web"].assessment.kind == "refused"
+    assert prepared.decisions["web"].assessment.kind is Kind.REFUSED
     assert "the image's uid 100000 is not in the nobody range 65530-65534" in prepared.problems[0]
 
 
@@ -321,8 +322,8 @@ def test_without_mounts_a_low_unknown_id_is_accepted_and_with_mounts_it_is_not()
     images = FakeImages(users={"web:1": "pg"})
     plain, _, _ = prepare(project(web={}), images)
     mounted, _, _ = prepare(project(web=BIND), images)
-    assert plain.decisions["web"].assessment.kind == "ok"
-    assert mounted.decisions["web"].assessment.kind == "refused"
+    assert plain.decisions["web"].assessment.kind is Kind.OK
+    assert mounted.decisions["web"].assessment.kind is Kind.REFUSED
 
 
 def test_with_mounts_a_root_image_still_runs_as_the_default_user():
@@ -344,7 +345,7 @@ def test_a_configured_user_applies_to_an_image_pulled_from_that_repository():
     images = FakeImages(users={"mariadb:11": ""}, digests={"mariadb:11": ["mariadb@sha256:abc"]})
     prepared, final, vetted = decided(mariadb_project(**BIND), images, active=("db",), settings=MARIADB)
 
-    assert prepared.decisions["db"].assessment.kind == "configured"
+    assert prepared.decisions["db"].assessment.kind is Kind.CONFIGURED
     assert final["services"]["db"]["user"] == "999:999" and vetted == {"db"}
     assert composeimages.notices(prepared, gate_context(images, MARIADB)) == []  # configured: no notice
     assert composeimages.describe(mariadb_project(), prepared, gate_context(images, MARIADB)) == [
@@ -362,7 +363,7 @@ def test_a_configured_user_does_not_apply_to_an_image_that_only_has_the_name(fie
     prepared, _, _ = prepare(config, images, active=("db",), settings=MARIADB)
 
     assessment = prepared.decisions["db"].assessment
-    assert assessment.kind == "fallback"  # the normal rules: root runs as the default user
+    assert assessment.kind is Kind.FALLBACK  # the normal rules: root runs as the default user
     lines = composeimages.describe(config, prepared, gate_context(images, MARIADB))
     assert lines[-1] == f"service db: note: the config sets a user for docker.io/library/mariadb, but {why}"
 

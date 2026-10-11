@@ -139,7 +139,7 @@ def fix_image_users(global_args, project_dir, fixed, notes, tools):
     if not prepared.decisions:
         return prepared.problems, notes  # nothing could be looked at: pulling or building failed
     for name, decision in prepared.decisions.items():
-        if decision.assessment.kind == "refused":
+        if decision.assessment.refused:
             fixed["services"][name]["user"] = autofix.USER_TEMPLATE
             notes.append(f"service {name}: image {decision.image} chose a user that is not acceptable, "
                          "so user is set explicitly")

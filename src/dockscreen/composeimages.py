@@ -82,7 +82,7 @@ def prepare(command, config, args, tools, chosen=frozenset()):
     decisions = decide(config, to_run - chosen, tools)
     problems = [
         f"service {name}: image {d.image}: {'; '.join(d.assessment.problems)}; set user: to choose one"
-        for name, d in decisions.items() if d.assessment.kind == "refused"
+        for name, d in decisions.items() if d.assessment.refused
     ]
     return Prepared(to_run, decisions, problems)
 
@@ -176,7 +176,7 @@ def decide(config, to_run, tools):
         _, container = tools.docker.create(["--pull=never", *platform, "--", image])
         image_id = None
         if container is None:
-            assessment = gate.Assessment("refused", ["the image is not available locally"])
+            assessment = gate.Assessment(gate.Kind.REFUSED, ["the image is not available locally"])
         else:
             try:
                 info = tools.docker.inspect_container(container)
@@ -185,7 +185,7 @@ def decide(config, to_run, tools):
                                          mounts=policy.has_host_mounts(service), reference=image,
                                          built="build" in service)
             except (DockerError, ValueError, KeyError) as e:
-                assessment = gate.Assessment("refused", [str(e)])
+                assessment = gate.Assessment(gate.Kind.REFUSED, [str(e)])
             finally:
                 tools.docker.remove(container)
         decisions[name] = Decision(image, assessment, image_id)
@@ -203,18 +203,19 @@ def finalize(config, prepared, ctx):
         if service.get("user"):
             continue
         decision = prepared.decisions.get(name)
-        kind = decision.assessment.kind if decision else "not started"
-        if kind in ("fallback", "not started"):
+        if decision is None:  # not started by this command
             service["user"] = gate.default_user_spec(ctx)  # an allowed id: the policy accepts it
-        elif kind in ("configured", "ok"):
-            # pinned as numbers: the runtime reads neither passwd nor group for `uid:gid`, so it cannot
-            # resolve the image's user to anything but what was checked
-            service["user"] = gate.pinned_user(ctx, decision.assessment)
-            vetted.add(name)
-        if decision and kind in ("configured", "ok", "fallback"):
-            service["pull_policy"] = "never"  # the image that was checked is the one that runs
-            if decision.image_id and "build" not in service:
-                service["image"] = decision.image_id  # ... even if the name is moved to another image
+            continue
+        if not decision.assessment.pins_user:
+            continue
+        # pinned as numbers: the runtime reads neither passwd nor group for `uid:gid`, so it cannot
+        # resolve the image's user to anything but what was checked
+        service["user"] = gate.pinned_user(ctx, decision.assessment)
+        if decision.assessment.kind is not gate.Kind.FALLBACK:
+            vetted.add(name)  # the default user is an allowed id, and needs no vetting
+        service["pull_policy"] = "never"  # the image that was checked is the one that runs
+        if decision.image_id and "build" not in service:
+            service["image"] = decision.image_id  # ... even if the name is moved to another image
     return final, frozenset(vetted)
 
 
@@ -231,13 +232,13 @@ def describe(config, prepared, ctx):
                          f"as the default user ({gate.default_user_spec(ctx)}) if it is started")
             continue
         assessment = decision.assessment
-        if assessment.kind == "ok":
+        if assessment.kind is gate.Kind.OK:
             who = imageuser.describe(assessment.identity, ctx.local)
             lines.append(f"service {name}: no user set; image {decision.image} runs as {who}; accepted")
-        elif assessment.kind == "configured":
+        elif assessment.kind is gate.Kind.CONFIGURED:
             lines.append(f"service {name}: no user set; image {decision.image} runs as "
                          f"{gate.pinned_user(ctx, assessment)}, the user the config file sets for it")
-        elif assessment.kind == "fallback":
+        elif assessment.kind is gate.Kind.FALLBACK:
             lines.append(f"service {name}: no user set; {fallback_text(ctx, decision)}")
         if assessment.note:
             lines.append(f"service {name}: note: {assessment.note}")
@@ -253,5 +254,5 @@ def notices(prepared, ctx):
     """What a run is about to do that the project did not ask for."""
     return [
         f"service {name}: {fallback_text(ctx, d)}"
-        for name, d in prepared.decisions.items() if d.assessment.kind == "fallback"
+        for name, d in prepared.decisions.items() if d.assessment.kind is gate.Kind.FALLBACK
     ]

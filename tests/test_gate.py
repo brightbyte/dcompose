@@ -645,3 +645,16 @@ def test_a_config_file_that_cannot_be_trusted_stops_the_docker_wrapper_too(route
     monkeypatch.setattr(config, "current", broken)
     assert docker_cli.main(["ps"]) == 1
     assert routed == [] and "unknown key 'typo'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("kind, refused, pins_user, replaces_image_user", [
+    (gate.Kind.EXPLICIT, False, False, False),   # the command line's user runs as given
+    (gate.Kind.CONFIGURED, False, True, True),
+    (gate.Kind.OK, False, True, False),           # the image's own user, pinned as numbers
+    (gate.Kind.FALLBACK, False, True, True),
+    (gate.Kind.REFUSED, True, False, False),
+])
+def test_assessment_predicates(kind, refused, pins_user, replaces_image_user):
+    assessment = gate.Assessment(kind, [])
+    assert (assessment.refused, assessment.pins_user, assessment.replaces_image_user) == (
+        refused, pins_user, replaces_image_user)
