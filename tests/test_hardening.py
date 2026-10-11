@@ -1,5 +1,5 @@
 import pytest
-from fakes import Accounts, rules
+from fakes import Accounts, rules, runtime
 
 from dockscreen import commands, hardening, patch, policy, screen
 
@@ -11,7 +11,7 @@ def config(**service):
 
 
 def test_missing_defaults_are_added_and_described():
-    hardened, additions = hardening.apply(config())
+    hardened, additions = hardening.apply(config(), Accounts())
 
     web = hardened["services"]["web"]
     assert web["cap_drop"] == ["ALL"] and web["security_opt"] == ["no-new-privileges:true"]
@@ -23,7 +23,8 @@ def test_missing_defaults_are_added_and_described():
 
 
 def test_existing_entries_are_kept_and_only_the_missing_one_is_added():
-    hardened, additions = hardening.apply(config(cap_drop=["NET_RAW"], security_opt=["seccomp=unconfined"]))
+    original = config(cap_drop=["NET_RAW"], security_opt=["seccomp=unconfined"])
+    hardened, additions = hardening.apply(original, Accounts())
 
     web = hardened["services"]["web"]
     assert web["cap_drop"] == ["NET_RAW", "ALL"]
@@ -37,32 +38,33 @@ def test_existing_entries_are_kept_and_only_the_missing_one_is_added():
 
 def test_a_compliant_service_is_left_alone_and_the_input_is_not_modified():
     original = config(cap_drop=["all"], security_opt=["no-new-privileges"])
-    hardened, additions = hardening.apply(original)
+    hardened, additions = hardening.apply(original, Accounts())
     assert hardened == original and additions == []
 
     bare = config()
-    hardening.apply(bare)
+    hardening.apply(bare, Accounts())
     assert "cap_drop" not in bare["services"]["web"]
 
 
 def test_a_project_cannot_weaken_the_defaults():
     # Appending true does not undo false: the policy still refuses the config.
-    hardened, _ = hardening.apply(config(security_opt=["no-new-privileges:false"], cap_add=["SYS_ADMIN"]))
+    original = config(security_opt=["no-new-privileges:false"], cap_add=["SYS_ADMIN"])
+    hardened, _ = hardening.apply(original, Accounts())
     problems = policy.check_config(hardened, policy.Context("/p", rules()))
     assert "service web: security_opt 'no-new-privileges:false' is not allowed" in problems
     assert "service web: cap_add is not allowed" in problems
 
 
 def test_a_config_without_the_keys_passes_the_policy_once_hardened():
-    hardened, _ = hardening.apply(config())
+    hardened, _ = hardening.apply(config(), Accounts())
     assert policy.check_config(hardened, policy.Context("/p", rules())) == []
     assert policy.check_config(config(), policy.Context("/p", rules()))  # but not as it stands
 
 
 def test_audit_reports_the_additions_and_hints_at_harden(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(screen, "inspect", lambda global_args: (config(), str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args, runtime: (config(), str(tmp_path)))
 
-    assert commands.audit([], []) == 0
+    assert commands.audit([], [], runtime()) == 0
 
     captured = capsys.readouterr()
     assert "audit passed" in captured.err
@@ -72,8 +74,8 @@ def test_audit_reports_the_additions_and_hints_at_harden(monkeypatch, capsys, tm
 
 def test_audit_of_a_clean_project_has_no_hint(monkeypatch, capsys, tmp_path):
     clean = config(cap_drop=["ALL"], security_opt=["no-new-privileges:true"])
-    monkeypatch.setattr(screen, "inspect", lambda global_args: (clean, str(tmp_path)))
-    assert commands.audit([], []) == 0
+    monkeypatch.setattr(screen, "inspect", lambda global_args, runtime: (clean, str(tmp_path)))
+    assert commands.audit([], [], runtime()) == 0
     assert "harden" not in capsys.readouterr().out
 
 
@@ -85,9 +87,9 @@ def two_services(**web):
 
 
 def test_harden_leaves_out_what_dockscreen_adds_and_says_so_once(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(screen, "inspect", lambda global_args: (two_services(), str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args, runtime: (two_services(), str(tmp_path)))
 
-    assert commands.harden([], []) == 0
+    assert commands.harden([], [], runtime()) == 0
 
     out = capsys.readouterr().out
     assert "cap_drop:" not in out.replace("# note", "").split("services:")[-1]
@@ -102,9 +104,9 @@ def test_harden_writes_only_what_is_needed_on_top_of_the_defaults(monkeypatch, c
     # user and a disallowed security option cannot be fixed by the defaults: appending
     # no-new-privileges leaves seccomp=unconfined in place, so the list has to be replaced.
     config = two_services(user="0:0", security_opt=["seccomp=unconfined"], cap_drop=["NET_RAW"])
-    monkeypatch.setattr(screen, "inspect", lambda global_args: (config, str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args, runtime: (config, str(tmp_path)))
 
-    commands.harden([], [])
+    commands.harden([], [], runtime())
 
     body = capsys.readouterr().out.split("services:", 1)[1]
     assert '    user: "${UID}:${GID}"' in body
@@ -114,9 +116,9 @@ def test_harden_writes_only_what_is_needed_on_top_of_the_defaults(monkeypatch, c
 
 
 def test_the_audit_still_reports_every_service(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(screen, "inspect", lambda global_args: (two_services(), str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args, runtime: (two_services(), str(tmp_path)))
 
-    commands.audit([], [])
+    commands.audit([], [], runtime())
 
     out = capsys.readouterr().out
     for service in ("web", "db"):
@@ -196,11 +198,11 @@ def test_hook_users_and_group_add_are_resolved_too():
 
 
 def test_the_audit_reports_the_resolution_and_harden_does_not_repeat_it(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(screen, "inspect", lambda global_args: (config(user="nobody"), str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args, _: (config(user="nobody"), str(tmp_path)))
 
-    commands.audit([], [])
+    commands.audit([], [], runtime())
     audit_out = capsys.readouterr().out
-    commands.harden([], [])
+    commands.harden([], [], runtime())
     harden_out = capsys.readouterr().out
 
     assert ('service web: user "nobody" names an account on this host; '

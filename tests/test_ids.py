@@ -8,8 +8,8 @@ from dockscreen import compose_cli, ids
 def test_export_sets_the_real_ids_and_is_idempotent():
     env = {"UID": "7", "GID": "8"}
 
-    ids.export(env)
-    ids.export(env)
+    ids.export(env, (os.getuid(), os.getgid()))
+    ids.export(env, (os.getuid(), os.getgid()))
 
     # a pre-set UID/GID is overwritten: a project's .env cannot make ${UID} mean someone else
     assert env == {"UID": str(os.getuid()), "GID": str(os.getgid())}

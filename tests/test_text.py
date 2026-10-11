@@ -1,6 +1,6 @@
 import os
 
-from fakes import rules
+from fakes import rules, runtime
 
 from dockscreen import autofix, commands, messages, patch, policy, screen
 from dockscreen.text import printable
@@ -46,11 +46,11 @@ def test_audit_info_lines_are_escaped(monkeypatch, capsys, tmp_path):
 
     image = "x\x1b[31m:1"
     cfg = {"name": "p", "services": {"web": {"image": image}}}
-    monkeypatch.setattr(screen, "inspect", lambda global_args: (cfg, str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args, runtime: (cfg, str(tmp_path)))
     tools, _ = make_tools(FakeImages(users={image: "app"}))
     install_tools(monkeypatch, tools)
 
-    commands.audit([], [])
+    commands.audit([], [], runtime())
 
     out = capsys.readouterr().out
     assert "service web: no user set; image x\\x1b[31m:1 runs as" in out

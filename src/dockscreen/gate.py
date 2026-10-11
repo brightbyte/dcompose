@@ -15,8 +15,6 @@ be rewritten. `create` only gets the hardening defaults; its container is
 checked when it is started. `audit` predicts the outcome for an image.
 """
 
-import os
-
 from dockscreen import argscan, hostusers, imageuser, messages, runargs
 from dockscreen.dockerclient import DockerError
 from dockscreen.imagedecision import (
@@ -42,7 +40,7 @@ VALUE_SHORT = frozenset("st")
 def run(ctx, args):
     """`docker run`; returns the exit code."""
     try:
-        parsed = runargs.parse(args, ctx.current_ids(), ctx.resolver())
+        parsed = runargs.parse(args, ctx.runtime.me, ctx.runtime.resolve_account)
     except runargs.ParseError as e:
         return messages.refuse([f"cannot read the command line: {e}; use the real docker for this one"])
     except hostusers.UserError as e:
@@ -111,7 +109,7 @@ def audit(ctx, args):
     """
     usage = "usage: docker audit [--allow-me] [--user UID:GID | --as NAME | --as-me] IMAGE"
     try:
-        parsed = runargs.parse(args, ctx.current_ids(), ctx.resolver())
+        parsed = runargs.parse(args, ctx.runtime.me, ctx.runtime.resolve_account)
         # parse rewrites every way of giving a user to --user=..., and drops --allow-me
         if parsed.command or any(not t.startswith("--user=") for t in parsed.create_args[:-1]):
             raise runargs.ParseError("only --allow-me, --user, --as and --as-me can come before the image")
@@ -179,14 +177,13 @@ def describe_outcome(ctx, assessment):
     return "would be refused" + (f" (runs as {who})" if who else "") + f": {reasons}"
 
 
-def create_args(args, current_user=None, resolve=None):
+def create_args(args, runtime):
     """The arguments of `docker create` with --as and --as-me replaced by ids, and --user checked.
 
     Returned as they are if they cannot be read: docker will report what is wrong with them.
     """
     try:
-        parsed = runargs.parse(
-            args, current_user or (os.getuid(), os.getgid()), resolve or hostusers.resolve_account)
+        parsed = runargs.parse(args, runtime.me, runtime.resolve_account)
     except runargs.ParseError:
         return args
     for message in parsed.notices:

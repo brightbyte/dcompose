@@ -14,13 +14,13 @@ from dockscreen import (
     flags,
     gate,
     hostusers,
-    idrules,
     imagedecision,
     messages,
     realdocker,
     screen,
 )
 from dockscreen.dockerclient import Docker
+from dockscreen.runtime import load_runtime
 
 # Global `docker` options that consume the following token as their value.
 DOCKER_OPTS_WITH_VALUE = frozenset({
@@ -45,7 +45,7 @@ def dispatch(argv):
         return passthrough(argv)
 
     allow_me, argv = flags.strip(argv, DOCKER_OPTS_WITH_VALUE, flags.ALLOW_ME)
-    config.current()  # a config file that cannot be trusted stops everything, before any docker runs
+    runtime = load_runtime()  # a config file that cannot be trusted stops everything, before any docker runs
 
     idx = argscan.find_subcommand(argv, DOCKER_OPTS_WITH_VALUE)
     if idx is None:
@@ -55,17 +55,17 @@ def dispatch(argv):
         if idx != 0:
             messages.notice("docker options before `compose` are not supported")
             return 1
-        return compose_cli.main([*([flags.ALLOW_ME] if allow_me else []), *argv[1:]])
+        return compose_cli.main([*([flags.ALLOW_ME] if allow_me else []), *argv[1:]], runtime)
 
     sub, end = argv[idx], idx
     if sub == "container" and idx + 1 < len(argv) and argv[idx + 1] in GATED - {"audit"}:
         sub, end = argv[idx + 1], idx + 1
     if sub not in GATED:
         return passthrough(argv)
-    return gated(argv, sub, idx, end, allow_me)
+    return gated(argv, sub, idx, end, runtime, allow_me)
 
 
-def gated(argv, sub, idx, end, allow_me=False):
+def gated(argv, sub, idx, end, runtime, allow_me=False):
     lead, args = argv[:end + 1], argv[end + 1:]
     if sub == "audit":
         if not args or args[:1] == ["--help"]:
@@ -76,19 +76,19 @@ def gated(argv, sub, idx, end, allow_me=False):
         return passthrough(argv)
     if sub == "create":
         try:
-            resolved = gate.create_args(args)
+            resolved = gate.create_args(args, runtime)
         except hostusers.UserError as e:
             return messages.refuse([str(e)])
         return passthrough([*lead, *gate.DEFAULTS, *resolved])
     if sub == "exec":
-        resolved = compose_cli.rewrite_exec("docker exec", args)
+        resolved = compose_cli.rewrite_exec("docker exec", args, runtime)
         return 1 if resolved is None else passthrough([*lead, *resolved])
 
     docker = Docker()
-    if screen.is_remote(argv[:idx], os.environ, docker):
+    if screen.is_remote(argv[:idx], runtime.env, docker):
         return messages.refuse([screen.REMOTE_MESSAGE])
 
-    ctx = imagedecision.Context(docker, idrules.rules(hostusers.HostAccounts(), allow_me))
+    ctx = imagedecision.Context(docker, runtime.rules(allow_me), runtime)
     if sub == "run":
         return gate.run(ctx, args)
     if sub == "audit":

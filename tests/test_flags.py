@@ -27,7 +27,7 @@ def test_banner_goes_to_stderr(capsys):
 
 
 def test_dockscreen_with_the_flag_is_plain_compose_with_a_warning(forwarded, monkeypatch, capsys):
-    monkeypatch.setattr(compose_cli.composerun, "run", lambda argv, idx: 1 / 0)
+    monkeypatch.setattr(compose_cli.composerun, "run", lambda *a, **k: 1 / 0)
     monkeypatch.setattr(compose_cli.screen, "passes", lambda *a: 1 / 0)
 
     compose_cli.main([FLAG, "-f", "a.yml", "up", "-d"])
@@ -49,7 +49,7 @@ def test_dockscreen_flag_also_skips_the_extra_subcommands(forwarded):
 def test_docker_with_the_flag_is_plain_docker_with_a_warning(monkeypatch, capsys, argv, expected):
     calls = []
     monkeypatch.setattr(docker_cli, "passthrough", lambda a: calls.append(a) or 0)
-    monkeypatch.setattr(docker_cli.compose_cli, "main", lambda a: 1 / 0)
+    monkeypatch.setattr(docker_cli.compose_cli, "main", lambda *a: 1 / 0)
 
     docker_cli.main(argv)
 

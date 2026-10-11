@@ -34,14 +34,14 @@ def require_numeric(spec, alternatives=DOCKER_ALTERNATIVES):
     raise UserError(f"--user takes numeric ids as uid:gid, not {spec!r}{hint}{alternatives}")
 
 
-def resolve_account(name, accounts=None):
+def resolve_account(name, accounts):
     """(`uid:gid`, messages) for the account called name on this host, with its primary group.
 
-    accounts: where to look the name up (HostAccounts, this host's).
+    accounts: where to look the name up (HostAccounts).
     """
     if not name or ":" in name or ids.is_id(name):
         raise UserError(f"--as takes the name of a local user, not {name!r}; use --user for ids")
-    account = (accounts or HostAccounts()).user(name)
+    account = accounts.user(name)
     if account is None:
         raise UnknownUser(f"user {name!r} does not exist on this host; use --user with a numeric id")
     uid, gid = account

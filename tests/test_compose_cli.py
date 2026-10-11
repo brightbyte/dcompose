@@ -29,7 +29,7 @@ def test_unknown_args_are_forwarded_verbatim(forwarded):
 def test_custom_command_gets_global_args_and_is_not_forwarded(forwarded, monkeypatch):
     seen = {}
 
-    def fake(global_args, args, allow_me=False):
+    def fake(global_args, args, runtime, allow_me=False):
         seen.update(global_args=global_args, args=args)
         return 7
 
@@ -68,7 +68,7 @@ def test_dockscreen_help_precedes_forwarding(forwarded, capsys, argv, expect_hel
 def test_runtime_subcommands_run_from_the_checked_config(forwarded, monkeypatch, subcommand):
     seen = []
     monkeypatch.setattr(composerun, "run",
-                        lambda argv, idx, allow_me: seen.append((argv, idx, allow_me)) or 3)
+                        lambda argv, idx, runtime, allow_me: seen.append((argv, idx, allow_me)) or 3)
 
     assert compose_cli.main(["-f", "a.yml", subcommand, "-d"]) == 3
 
@@ -80,7 +80,7 @@ def test_runtime_subcommands_run_from_the_checked_config(forwarded, monkeypatch,
 def test_build_subcommands_get_the_build_rules_and_are_then_forwarded(forwarded, monkeypatch, subcommand):
     seen = []
     monkeypatch.setattr(screen, "passes",
-                        lambda global_args, rules: seen.append((global_args, rules)) or True)
+                        lambda global_args, runtime, rules: seen.append((global_args, rules)) or True)
 
     compose_cli.main(["-f", "a.yml", subcommand])
 
@@ -89,14 +89,14 @@ def test_build_subcommands_get_the_build_rules_and_are_then_forwarded(forwarded,
 
 
 def test_build_with_problems_is_not_forwarded(forwarded, monkeypatch):
-    monkeypatch.setattr(screen, "passes", lambda global_args, rules: False)
+    monkeypatch.setattr(screen, "passes", lambda global_args, runtime, rules: False)
     assert compose_cli.main(["build"]) == 1
     assert forwarded == []
 
 
 def test_unscreened_subcommand_is_not_inspected(forwarded, monkeypatch):
-    monkeypatch.setattr(screen, "passes", lambda global_args, rules: 1 / 0)
-    monkeypatch.setattr(composerun, "run", lambda argv, idx, allow_me: 1 / 0)
+    monkeypatch.setattr(screen, "passes", lambda global_args, runtime, rules: 1 / 0)
+    monkeypatch.setattr(composerun, "run", lambda argv, idx, runtime, allow_me: 1 / 0)
     compose_cli.main(["ps"])
     assert forwarded == [["ps"]]
 
@@ -125,7 +125,8 @@ def test_is_screened(argv, screened):
 
 def test_allow_me_before_the_subcommand_reaches_the_checks_and_not_compose(forwarded, monkeypatch):
     seen = []
-    monkeypatch.setattr(composerun, "run", lambda argv, idx, allow_me: seen.append((argv, allow_me)) or 0)
+    monkeypatch.setattr(composerun, "run",
+                        lambda argv, idx, runtime, allow_me: seen.append((argv, allow_me)) or 0)
     compose_cli.main(["--allow-me", "-f", "a.yml", "up"])
     assert seen == [(["-f", "a.yml", "up"], True)]
 
@@ -151,7 +152,7 @@ def test_exec_takes_numeric_users_only(forwarded, capsys, argv, code):
 
 def test_exec_as_a_local_user_reaches_compose_as_numeric_ids(forwarded, monkeypatch, capsys):
     monkeypatch.setattr(hostusers, "resolve_account",
-                        lambda name: ("1001:1002", [f"Resolving user {name} to uid 1001, gid 1002"]))
+                        lambda name, _: ("1001:1002", [f"Resolving user {name} to uid 1001, gid 1002"]))
     assert compose_cli.main(["exec", "--as", "alice", "web", "sh"]) is None
     assert forwarded == [["exec", "--user=1001:1002", "web", "sh"]]
     assert "Resolving user alice" in capsys.readouterr().err

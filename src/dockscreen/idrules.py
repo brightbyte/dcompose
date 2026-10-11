@@ -19,7 +19,6 @@ Allowed ids: the nobody range and the default user from the config file, ids the
 check (a configured image user), and the caller's own ids when --allow-me was given.
 """
 
-import os
 from typing import NamedTuple
 
 from dockscreen import config as configuration
@@ -97,16 +96,3 @@ def read_ranges(path):
         if len(fields) == 3 and fields[1].isdigit() and fields[2].isdigit():
             ranges.append((int(fields[1]), int(fields[2])))
     return ranges
-
-
-def rules(local, allow_me=False, config=None, me=None):
-    """The rules for this process: the config file, this host's accounts and subordinate ranges."""
-    config = config or configuration.current()
-    return Rules(
-        me=me or (os.getuid(), os.getgid()),
-        allow_me=allow_me,
-        nobody_range=config.nobody_range,
-        default_user=config.default_user,
-        local=local,
-        subordinate=Subordinate(),
-    )

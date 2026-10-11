@@ -26,7 +26,6 @@ from dockscreen import (
     composeimages,
     hardening,
     hostusers,
-    idrules,
     imagedecision,
     messages,
     policy,
@@ -69,21 +68,22 @@ class Project(NamedTuple):
         return generated(self.global_args, self.directory)
 
 
-def load_project(global_args, allow_me, tools=None):
+def load_project(global_args, runtime, allow_me, tools=None):
     """The project global_args select, hardened. Raises screen.ScreenError or ValueError if it cannot be
     inspected.
 
     allow_me: --allow-me was given, so the caller's own ids are allowed.
+    tools: what to pull, build and run with; default_tools() if not given.
     """
-    config, directory = screen.inspect(global_args)
-    hardened, additions = hardening.apply(config)
-    tools = tools or default_tools(allow_me)
-    remote = screen.is_remote(global_args, os.environ, tools.docker)
-    return Project(global_args, directory, hardened, additions, screen.context(directory, allow_me), tools,
-                   remote)
+    config, directory = screen.inspect(global_args, runtime)
+    hardened, additions = hardening.apply(config, runtime.accounts)
+    tools = tools or default_tools(runtime, allow_me)
+    remote = screen.is_remote(global_args, runtime.env, tools.docker)
+    ctx = screen.context(directory, runtime, allow_me)
+    return Project(global_args, directory, hardened, additions, ctx, tools, remote)
 
 
-def run(argv, idx, tools=None, allow_me=False):
+def run(argv, idx, runtime, tools=None, allow_me=False):
     """Harden and check the project, then run argv[idx:] (a subcommand that starts containers) on it.
 
     The images of services that set no user are acquired first, by the project's pull policy, and
@@ -91,8 +91,8 @@ def run(argv, idx, tools=None, allow_me=False):
     allow_me: --allow-me was given, so the caller's own ids are allowed.
     """
     try:
-        parsed = command_line(argv[idx], argv[idx + 1:])
-        project = load_project(argv[:idx], allow_me, tools)
+        parsed = command_line(argv[idx], argv[idx + 1:], runtime)
+        project = load_project(argv[:idx], runtime, allow_me, tools)
         problems = project.problems()
     except (screen.ScreenError, hostusers.UserError, ValueError) as e:
         problems = [str(e)]
@@ -100,11 +100,11 @@ def run(argv, idx, tools=None, allow_me=False):
         return 1
 
     hardened, tools = project.hardened, project.tools
-    lines = [*parsed.notices, *screen.mount_dir_warnings(os.environ),
+    lines = [*parsed.notices, *screen.mount_dir_warnings(runtime),
              imagedecision.root_default_notice(tools.gate_ctx)]
     if project.additions:
         lines.append(hardening.summary(project.additions))
-    lines += shellenv.describe(hardened, os.environ)
+    lines += shellenv.describe(hardened, runtime.env)
     with project.generated() as command:
         prepared = composeimages.prepare(command(hardened), hardened, parsed.args, tools, chosen(parsed))
         if not messages.report(prepared.problems):
@@ -118,14 +118,14 @@ def run(argv, idx, tools=None, allow_me=False):
         return tools.run_child([*command(final), argv[idx], *parsed.args])
 
 
-def command_line(subcommand, args):
+def command_line(subcommand, args, runtime):
     """args read as composeargs does for `run`, with --as resolved; other subcommands as they are.
 
     Raises hostusers.UserError for a user that is not numeric `uid:gid`, or an unknown --as name.
     """
     if subcommand != "run":
         return composeargs.Parsed(None, False, args, [])
-    return composeargs.parse("run", args)
+    return composeargs.parse("run", args, runtime.me, runtime.resolve_account)
 
 
 def chosen(parsed):
@@ -153,9 +153,9 @@ def generated(global_args, project_dir):
         yield command
 
 
-def default_tools(allow_me=False):
+def default_tools(runtime, allow_me=False):
     docker = Docker()
-    gate_ctx = imagedecision.Context(docker, idrules.rules(hostusers.HostAccounts(), allow_me))
+    gate_ctx = imagedecision.Context(docker, runtime.rules(allow_me), runtime)
     return composeimages.Tools(
         docker, gate_ctx, lambda cmd: subprocess.run(cmd, capture_output=True, text=True, check=False),
         run_child)

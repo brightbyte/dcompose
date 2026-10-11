@@ -38,21 +38,21 @@ class Config(NamedTuple):
     image_users: MappingProxyType = MappingProxyType({})  # normalised repository -> (uid, gid)
 
 
-def user_file(env):
+def user_file(env, home):
     """$XDG_CONFIG_HOME/dockscreen/config.toml; a relative XDG_CONFIG_HOME is ignored, as XDG says."""
     base = env.get("XDG_CONFIG_HOME", "")
     if not os.path.isabs(base):
-        base = os.path.join(os.path.expanduser("~"), ".config")
+        base = os.path.join(home, ".config")
     return os.path.join(base, "dockscreen", "config.toml")
 
 
 @functools.cache
 def current():
     """The configuration for this process, read once."""
-    path = user_file(os.environ)
+    path = user_file(os.environ, os.path.expanduser("~"))
     if create_user_file(path):
         messages.notice(f"created {path}, which shows the defaults")
-    return load([SYSTEM_FILE, path])
+    return load([SYSTEM_FILE, path], os.getuid())
 
 
 def create_user_file(path):
@@ -72,12 +72,11 @@ def create_user_file(path):
     return True
 
 
-def load(paths, uid=None, check=None):
+def load(paths, uid, check=None):
     """Read and merge the files in paths (later ones win); missing files are skipped.
 
     check(path, uid) raises ConfigError for a file that cannot be trusted (strict_modes by default).
     """
-    uid = os.getuid() if uid is None else uid
     check = check or strict_modes
     merged, image_users = {}, {}
     for path in paths:

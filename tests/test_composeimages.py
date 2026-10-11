@@ -2,7 +2,7 @@ import copy
 import subprocess
 
 import pytest
-from fakes import FakeImages, make_tools, rules
+from fakes import FakeImages, make_tools, rules, runtime
 
 from dockscreen import autofix, composeimages, imagedecision, policy
 from dockscreen import config as configuration
@@ -28,7 +28,7 @@ def prepare(config, images, args=(), active=("web",), codes=None, settings=None,
 
 def gate_context(images, settings=None):
     settings = settings or configuration.Config()
-    return imagedecision.Context(images, rules(settings=settings), settings)
+    return imagedecision.Context(images, rules(settings=settings), runtime(settings=settings))
 
 
 def subcommands(recorder):

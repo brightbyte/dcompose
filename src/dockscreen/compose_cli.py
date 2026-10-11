@@ -22,6 +22,7 @@ from dockscreen import (
     screen,
 )
 from dockscreen.commands import ALIASES, COMMANDS
+from dockscreen.runtime import load_runtime
 
 # Subcommands that create containers from the config. `alpha` is a group (older
 # compose has `alpha watch`); screening it is cheap and errs on the safe side.
@@ -53,15 +54,16 @@ def forward(argv):
         messages.fatal(messages.DOCKER_NOT_FOUND)
 
 
-def main(argv=None):
+def main(argv=None, runtime=None):
+    """runtime: the Runtime the `docker` wrapper already loaded, if it was called by that."""
     argv = sys.argv[1:] if argv is None else list(argv)
     try:
-        return dispatch(argv)
+        return dispatch(argv, runtime)
     except config.ConfigError as e:
         return messages.refuse([f"config file {e}"])
 
 
-def dispatch(argv):
+def dispatch(argv, runtime=None):
     skipped, argv = flags.strip(argv, GLOBAL_OPTS_WITH_VALUE)
     if skipped:
         flags.banner()
@@ -72,20 +74,22 @@ def dispatch(argv):
     if as_me:
         messages.notice(flags.AS_ME_MESSAGE)
         return 2
-    config.current()  # a config file that cannot be trusted stops everything, before any docker runs
-    ids.export(os.environ)
+    # a config file that cannot be trusted stops everything, before any docker runs
+    runtime = runtime or load_runtime()
+    ids.export(runtime.env, runtime.me)
 
     idx = argscan.find_subcommand(argv, GLOBAL_OPTS_WITH_VALUE)
     if idx is not None and argv[idx] in COMMANDS:
-        return COMMANDS[argv[idx]](global_args=argv[:idx], args=argv[idx + 1:], allow_me=allow_me)
+        return COMMANDS[argv[idx]](global_args=argv[:idx], args=argv[idx + 1:], runtime=runtime,
+                                   allow_me=allow_me)
 
     if is_screened(argv, idx):
         if argv[idx] not in BUILD_SUBCOMMANDS:
-            return composerun.run(argv, idx, allow_me=allow_me)
-        if not screen.passes(argv[:idx], policy.check_build_config):
+            return composerun.run(argv, idx, runtime, allow_me=allow_me)
+        if not screen.passes(argv[:idx], runtime, policy.check_build_config):
             return 1
     elif idx is not None and argv[idx] == "exec" and argv[idx + 1:idx + 2] != ["--help"]:
-        args = rewrite_exec("exec", argv[idx + 1:])
+        args = rewrite_exec("exec", argv[idx + 1:], runtime)
         if args is None:
             return 1
         argv = [*argv[:idx + 1], *args]
@@ -96,13 +100,13 @@ def dispatch(argv):
     forward(argv)
 
 
-def rewrite_exec(kind, args):
+def rewrite_exec(kind, args, runtime):
     """The arguments of `exec` (kind: "exec" or "docker exec") with --as and --as-me replaced by ids.
 
     None if the user they give cannot be used; that has been reported.
     """
     try:
-        parsed = composeargs.parse(kind, args)
+        parsed = composeargs.parse(kind, args, runtime.me, runtime.resolve_account)
     except hostusers.UserError as e:
         messages.report([str(e)])
         return None

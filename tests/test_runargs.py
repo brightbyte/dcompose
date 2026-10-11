@@ -7,7 +7,7 @@ ME = (4242, 4343)
 
 
 def parse(*args):
-    return runargs.parse(list(args), ME)
+    return runargs.parse(list(args), ME, fakes.host_account)
 
 
 def test_plain_command():
@@ -69,7 +69,7 @@ def test_double_dash_ends_the_options():
 @pytest.mark.parametrize("args", [[], ["--rm"], ["-it"], ["--name"], ["-p"], ["-a"]])
 def test_incomplete_command_lines_are_errors(args):
     with pytest.raises(runargs.ParseError):
-        runargs.parse(args, ME)
+        runargs.parse(args, ME, fakes.host_account)
 
 
 def test_as_me_means_the_callers_ids_and_resolves_nothing():

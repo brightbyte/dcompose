@@ -36,10 +36,6 @@ def test_as_takes_a_name_not_an_id_or_a_group(name):
         host_account(name)
 
 
-def test_the_hosts_own_accounts_are_used_by_default():
-    assert hostusers.resolve_account("root") == ("0:0", ["Resolving user root to uid 0, gid 0"])
-
-
 def test_a_uid_without_a_gid_says_to_give_the_group():
     with pytest.raises(hostusers.UserError, match="not '1000'; give the group too, as uid:gid"):
         hostusers.require_numeric("1000")

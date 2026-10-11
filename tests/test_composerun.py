@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from fakes import FakeImages, make_tools, read_raw
+from fakes import FakeImages, make_tools, read_raw, runtime
 
 from dockscreen import argscan, composerun, hostusers, screen
 
@@ -13,11 +13,11 @@ def project_config(**service):
 
 
 def inspect_as(monkeypatch, tmp_path, config):
-    monkeypatch.setattr(screen, "inspect", lambda global_args: (config, str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args, runtime: (config, str(tmp_path)))
 
 
 def up(argv, idx, tools, allow_me=False):
-    return composerun.run(argv, idx, tools, allow_me=allow_me)
+    return composerun.run(argv, idx, runtime(), tools, allow_me=allow_me)
 
 
 def last(recorder):
@@ -75,7 +75,7 @@ def test_what_is_checked_is_what_runs(monkeypatch, tmp_path):
 
 
 def test_inspection_failure_and_missing_project_name_are_refusals(monkeypatch, tmp_path, capsys):
-    def boom(global_args):
+    def boom(global_args, runtime):
         raise screen.ScreenError("no compose file found")
     monkeypatch.setattr(screen, "inspect", boom)
     tools, recorder = make_tools()
@@ -115,7 +115,7 @@ def test_run_with_a_user_on_the_command_line_skips_deciding_that_services_image(
 def test_run_as_a_local_user_reaches_compose_as_numeric_ids(monkeypatch, tmp_path, capsys):
     inspect_as(monkeypatch, tmp_path, no_user())
     monkeypatch.setattr(hostusers, "resolve_account",
-                        lambda name: ("1000:1000", [f"Resolving user {name} to uid 1000, gid 1000"]))
+                        lambda name, _: ("1000:1000", [f"Resolving user {name} to uid 1000, gid 1000"]))
     tools, recorder = make_tools(FakeImages(users={"x:1": "web"}))  # uid 1000: would be refused
 
     assert up(["run", "--as", "alice", "web", "sh"], 0, tools) == 0

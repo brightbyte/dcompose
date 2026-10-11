@@ -54,9 +54,15 @@ class Accounts:
 REAL_RESOLVE = hostusers.resolve_account  # tests that replace it by host_account must not recurse
 
 
-def host_account(name):
-    """hostusers.resolve_account against the host of Accounts."""
+def host_account(name, accounts=None):
+    """hostusers.resolve_account against the host of Accounts, whatever accounts are given."""
     return REAL_RESOLVE(name, Accounts())
+
+
+def runtime(**fields):
+    """The Runtime load_runtime() gives with the conftest fixtures in place, with fields replaced."""
+    from dockscreen.runtime import load_runtime
+    return load_runtime()._replace(**fields)
 
 
 class FakeImages:
@@ -144,7 +150,7 @@ def make_tools(images=None, active=("web",), codes=None, on_child=None, reads=No
             return subprocess.CompletedProcess(cmd, 0, json.dumps(reads(config) if reads else config), "")
         return subprocess.CompletedProcess(cmd, 0, "\n".join(active) + "\n", "")
 
-    gate_ctx = gate_ctx or imagedecision.Context(images, rules(), config.Config(), current_user=(1000, 1000))
+    gate_ctx = gate_ctx or imagedecision.Context(images, rules(), runtime(me=(1000, 1000)))
     return composeimages.Tools(images, gate_ctx, capture, run_child), recorder
 
 
@@ -165,5 +171,5 @@ def read_raw(cmd):
 def install_tools(monkeypatch, tools):
     """Make composerun.default_tools return tools, with --allow-me applied as the real one does."""
     from dockscreen import composerun
-    monkeypatch.setattr(composerun, "default_tools", lambda allow_me=False: tools._replace(
+    monkeypatch.setattr(composerun, "default_tools", lambda runtime, allow_me=False: tools._replace(
         gate_ctx=tools.gate_ctx.allowing_me(allow_me)))

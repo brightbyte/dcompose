@@ -1,6 +1,6 @@
 import os
 
-from fakes import rules
+from fakes import rules, runtime
 
 from dockscreen import autofix, commands, patch, policy, screen
 
@@ -43,9 +43,9 @@ def test_unfixed_problems_are_listed_as_comments():
 
 def test_fix_command_prints_patch_and_fails_when_problems_remain(monkeypatch, capsys, tmp_path):
     original = config(user="0:0", build={"context": "/"})
-    monkeypatch.setattr(screen, "inspect", lambda global_args: (original, str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args, runtime: (original, str(tmp_path)))
 
-    assert commands.harden([], []) == 1
+    assert commands.harden([], [], runtime()) == 1
 
     captured = capsys.readouterr()
     assert "services:" in captured.out and "user:" in captured.out

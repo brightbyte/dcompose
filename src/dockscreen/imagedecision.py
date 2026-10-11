@@ -17,32 +17,23 @@ Used by `docker run` (gate) and by compose (composeimages) alike.
 """
 
 import enum
-import os
 from typing import NamedTuple
 
-from dockscreen import config as configuration
-from dockscreen import hostusers, ids, images, imageuser
+from dockscreen import ids, images, imageuser
 
 
 class Context(NamedTuple):
     docker: object
-    ids: object                        # idrules.Rules
-    config: object = None              # config.Config; the process's own if None
-    current_user: tuple | None = None  # (uid, gid) that --as-me stands for; the real ones if None
-    resolve_user: object = None        # turns the name given to --as into ids (hostusers.resolve_account)
+    ids: object      # idrules.Rules
+    runtime: object  # runtime.Runtime: the config file, the caller's ids, the host's accounts
 
     @property
     def local(self):
         return self.ids.local
 
-    def current_ids(self):
-        return self.current_user or (os.getuid(), os.getgid())
-
-    def resolver(self):
-        return self.resolve_user or hostusers.resolve_account
-
+    @property
     def settings(self):
-        return self.config or configuration.current()
+        return self.runtime.settings
 
     def allowing_me(self, allow_me):
         """This context with the caller's own ids allowed if allow_me, for --allow-me and --as-me."""
@@ -106,7 +97,7 @@ def assess(ctx, container, info, explicit=None, mounts=None, reference=None, bui
     if explicit:
         return Assessment(Kind.EXPLICIT, [])  # trusted: the person typing the command chose it
 
-    match = images.configured_user(ctx.settings(), reference or info["Config"].get("Image") or "",
+    match = images.configured_user(ctx.settings, reference or info["Config"].get("Image") or "",
                                    image.get("RepoDigests"), built)
     if match.user:
         return Assessment(Kind.CONFIGURED, [], imageuser.Identity(*match.user, ()))
@@ -129,7 +120,7 @@ def assess(ctx, container, info, explicit=None, mounts=None, reference=None, bui
 
 def default_user_spec(ctx):
     """The `uid:gid` that replaces an image's root user."""
-    return ids.format_user(ctx.settings().default_user)
+    return ids.format_user(ctx.settings.default_user)
 
 
 def pinned_user(ctx, assessment):
@@ -141,7 +132,7 @@ def pinned_user(ctx, assessment):
 
 def root_default_notice(ctx):
     """A notice for every run when the configured default user is root, or None."""
-    if 0 in ctx.settings().default_user:
+    if 0 in ctx.settings.default_user:
         return (f"the configured default user is {default_user_spec(ctx)}: "
                 "images that would run as root run as root")
     return None

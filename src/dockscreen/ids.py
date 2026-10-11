@@ -9,15 +9,12 @@ Ids given by the command line, the config file or the project are ASCII digits o
 ids out of an image's passwd and group files is different, and lives in imageuser.
 """
 
-import os
-
 EXPORTED = ("UID", "GID")
 
 
-def export(env):
-    """Set UID and GID in env to the real ids. Idempotent."""
-    env["UID"] = str(os.getuid())
-    env["GID"] = str(os.getgid())
+def export(env, me):
+    """Set UID and GID in env to me, the caller's real (uid, gid). Idempotent."""
+    env["UID"], env["GID"] = (str(i) for i in me)
 
 
 def is_id(text):

@@ -74,7 +74,7 @@ def project(tmp_path, monkeypatch):
     # the real tools: real subprocesses against the fake script
     tools = composerun.composeimages.Tools(
         composerun.Docker(), composerun.imagedecision.Context(composerun.Docker(), fakes.rules(),
-                                                     current_user=(1000, 1000)),
+                                                              fakes.runtime(me=(1000, 1000))),
         lambda cmd: __import__("subprocess").run(cmd, capture_output=True, text=True, check=False),
         composerun.run_child)
     fakes.install_tools(monkeypatch, tools)

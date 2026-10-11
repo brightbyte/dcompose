@@ -1,13 +1,12 @@
 """Custom subcommands.
 
-A command is a callable(global_args, args) -> exit code. `global_args` are the
+A command is a callable(global_args, args, runtime, allow_me) -> exit code. `global_args` are the
 compose-level options that preceded the subcommand (e.g. ["-f", "x.yml"]), so
 a command can pass them on when it shells out to docker compose.
 
 A name registered here shadows the docker compose subcommand of the same name.
 """
 
-import os
 import subprocess
 import sys
 
@@ -43,29 +42,29 @@ HARDEN_HINT = "hint: the harden subcommand prints a compose override file with t
 
 
 @command("doctor")
-def doctor(global_args, args, allow_me=False):
+def doctor(global_args, args, runtime, allow_me=False):
     """Show the docker compose version that other commands are forwarded to."""
     return subprocess.call([realdocker.docker_bin(), "compose", *global_args, "version", *args])
 
 
 @command("audit")
-def audit(global_args, args, allow_me=False):
+def audit(global_args, args, runtime, allow_me=False):
     """Run the checks that screen `up` without starting anything; pulls and builds images as up would."""
     if args:
         messages.notice("usage: dockscreen [compose options] audit")
         return 2
 
     try:
-        project = composerun.load_project(global_args, allow_me)
+        project = composerun.load_project(global_args, runtime, allow_me)
         problems = project.problems()
     except (screen.ScreenError, ValueError) as e:
         project, problems = None, [str(e)]
 
-    lines = screen.mount_dir_warnings(os.environ)
+    lines = screen.mount_dir_warnings(runtime)
     if project is not None:
         hardened, tools = project.hardened, project.tools
         lines += hardening.describe(project.additions)
-        lines += shellenv.describe(hardened, os.environ)
+        lines += shellenv.describe(hardened, runtime.env)
         if problems:
             lines.append("the images were not looked at because of the problems above: "
                          "nothing was pulled or built")
@@ -88,7 +87,7 @@ def audit(global_args, args, allow_me=False):
 
 
 @command("harden", "fix")
-def harden(global_args, args, allow_me=False):
+def harden(global_args, args, runtime, allow_me=False):
     """Print a compose override that fixes what can be fixed; exit 1 if problems remain.
 
     The patch is relative to the merged config as dockscreen will run it, defaults
@@ -102,7 +101,7 @@ def harden(global_args, args, allow_me=False):
     if --allow-me were given, and the patch says that it needs it.
     """
     try:
-        project = composerun.load_project(global_args, allow_me=True)
+        project = composerun.load_project(global_args, runtime, allow_me=True)
     except (screen.ScreenError, ValueError) as e:
         messages.notice(e)
         return 1

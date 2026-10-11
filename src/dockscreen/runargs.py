@@ -54,7 +54,7 @@ class _State:
         self.detach_keys = None
 
 
-def parse(args, current_user, resolve=hostusers.resolve_account):
+def parse(args, current_user, resolve):
     """Split run arguments.
 
     current_user: the (uid, gid) that --as-me stands for.

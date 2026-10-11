@@ -12,7 +12,7 @@ import copy
 import json
 from typing import NamedTuple
 
-from dockscreen import hostusers, ids, policy
+from dockscreen import ids, policy
 from dockscreen.policy import CAP_DROP, SECURITY_OPT
 
 class Addition(NamedTuple):
@@ -21,12 +21,11 @@ class Addition(NamedTuple):
     message: str  # what was missing or a name, and what dockscreen does about it
 
 
-def apply(config, accounts=None):
+def apply(config, accounts):
     """(config with the defaults added and user names resolved, the list of additions).
 
-    accounts: the users and groups to resolve names with (hostusers.HostAccounts, this host's).
+    accounts: the users and groups to resolve names with (hostusers.HostAccounts).
     """
-    accounts = accounts or hostusers.HostAccounts()
     hardened = copy.deepcopy(config)
     additions = []
     for name, service in (hardened.get("services") or {}).items():

@@ -19,7 +19,7 @@ def trusting(path, uid):
 
 
 def load(*paths):
-    return config.load(list(paths), check=trusting)
+    return config.load(list(paths), os.getuid(), check=trusting)
 
 
 def test_no_files_means_the_defaults(tmp_path):
@@ -126,14 +126,14 @@ def test_a_file_that_fails_strict_modes_is_an_error(tmp_path):
         raise config.ConfigError(f"{path_}: nope")
 
     with pytest.raises(config.ConfigError, match="nope"):
-        config.load([path], check=refuse)
+        config.load([path], os.getuid(), check=refuse)
 
 
 def test_the_user_file_follows_xdg(tmp_path):
-    assert config.user_file({"XDG_CONFIG_HOME": "/x"}) == "/x/dockscreen/config.toml"
-    default = os.path.join(os.path.expanduser("~"), ".config", "dockscreen", "config.toml")
-    assert config.user_file({}) == default
-    assert config.user_file({"XDG_CONFIG_HOME": "relative"}) == default
+    assert config.user_file({"XDG_CONFIG_HOME": "/x"}, "/home/me") == "/x/dockscreen/config.toml"
+    default = "/home/me/.config/dockscreen/config.toml"
+    assert config.user_file({}, "/home/me") == default
+    assert config.user_file({"XDG_CONFIG_HOME": "relative"}, "/home/me") == default
 
 
 def test_a_missing_user_file_is_created_with_every_setting_commented_out(tmp_path):

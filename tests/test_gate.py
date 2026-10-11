@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from fakes import GROUP, PASSWD, host_account, rules
+from fakes import GROUP, PASSWD, host_account, rules, runtime
 
 from dockscreen import argscan, config, docker_cli, gate, hostusers, imagedecision
 from dockscreen.dockerclient import DockerError, first_file_of_tar
@@ -68,8 +68,8 @@ ME = (4242, 4343)
 
 def ctx(docker, settings=None, allow_me=False):
     settings = settings or config.Config()
-    return imagedecision.Context(docker, rules(me=ME, allow_me=allow_me, settings=settings), settings,
-                        resolve_user=host_account)
+    return imagedecision.Context(docker, rules(me=ME, allow_me=allow_me, settings=settings),
+                                 runtime(settings=settings, me=ME))
 
 
 def test_acceptable_image_user_runs_attached_with_hardening_defaults():
@@ -267,8 +267,7 @@ def test_an_image_that_would_run_as_root_is_run_as_nobody_instead(image_user, ca
 ])
 def test_a_user_on_the_command_line_prevents_the_fallback(flags, capsys):
     docker = FakeDocker(image_user="")  # root, which would fall back without the flag
-    context = imagedecision.Context(docker, rules(me=ME), config.Config(), current_user=(4242, 4343),
-                           resolve_user=host_account)
+    context = imagedecision.Context(docker, rules(me=ME), runtime(me=ME))
 
     assert gate.run(context, [*flags, "img"]) == 42
 
@@ -278,7 +277,7 @@ def test_a_user_on_the_command_line_prevents_the_fallback(flags, capsys):
 
 def test_as_me_means_the_callers_ids():
     docker = FakeDocker(image_user="")
-    context = imagedecision.Context(docker, rules(me=ME), config.Config(), current_user=(4242, 4343))
+    context = imagedecision.Context(docker, rules(me=ME), runtime(me=ME))
     gate.run(context, ["--as-me", "img"])
     assert docker.calls[0][1] == [*DEFAULTS, "--user=4242:4343", "img"]
 
@@ -364,7 +363,7 @@ def test_existing_containers_are_checked_by_the_same_rule():
 def routed(monkeypatch):
     calls = []
     monkeypatch.setattr(docker_cli, "passthrough", lambda argv: calls.append(("exec", argv)) or 0)
-    monkeypatch.setattr(docker_cli.compose_cli, "main", lambda argv: calls.append(("compose", argv)) or 0)
+    monkeypatch.setattr(docker_cli.compose_cli, "main", lambda argv, _: calls.append(("compose", argv)) or 0)
     monkeypatch.setattr(docker_cli, "Docker", lambda: FakeDocker(image_user="app"))
     return calls
 
@@ -395,7 +394,7 @@ def test_exec_takes_numeric_users_only(routed, argv, capsys):
 
 
 def test_exec_as_a_local_user_reaches_docker_as_numeric_ids(routed, monkeypatch):
-    monkeypatch.setattr(hostusers, "resolve_account", lambda name: ("1001:1002", []))
+    monkeypatch.setattr(hostusers, "resolve_account", lambda name, accounts: ("1001:1002", []))
     docker_cli.main(["-l", "debug", "container", "exec", "--as=alice", "c", "sh"])
     assert routed == [("exec", ["-l", "debug", "container", "exec", "--user=1001:1002", "c", "sh"])]
 

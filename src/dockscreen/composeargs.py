@@ -12,7 +12,6 @@ line could have done with plain compose anyway, and a service that is missed has
 if no user had been chosen.
 """
 
-import os
 from typing import NamedTuple
 
 from dockscreen import flags, hostusers
@@ -38,15 +37,14 @@ class Parsed(NamedTuple):
     notices: list     # what resolving user names on this host did, for the caller to print
 
 
-def parse(subcommand, args, resolve=None, current_user=None):
+def parse(subcommand, args, current_user, resolve):
     """The service named in args, and whether a user is given; raises hostusers.UserError for a user
     that is not numeric `uid:gid`, or an --as that does not name a local user.
 
+    current_user: the (uid, gid) that --as-me stands for.
     resolve: turns the name given to --as into "uid:gid" (hostusers.resolve_account), with messages.
-    current_user: the (uid, gid) that --as-me stands for; the caller's by default.
     """
-    users = hostusers.UserOptions(current_user or (os.getuid(), os.getgid()),
-                                  resolve or hostusers.resolve_account)
+    users = hostusers.UserOptions(current_user, resolve)
     value_flags = VALUE_FLAGS[subcommand]
     kept = []
     i = 0
