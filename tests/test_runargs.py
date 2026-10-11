@@ -1,7 +1,7 @@
 import fakes
 import pytest
 
-from dcompose import hostusers, runargs
+from dockscreen import hostusers, runargs
 
 ME = (4242, 4343)
 

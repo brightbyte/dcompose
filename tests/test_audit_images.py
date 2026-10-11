@@ -3,7 +3,7 @@ import os
 
 from fakes import FakeImages, make_tools
 
-from dcompose import commands, composerun, guard
+from dockscreen import commands, composerun, guard
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -43,7 +43,7 @@ def test_audit_pulls_and_says_what_happens_to_each_service_without_a_user(monkey
     assert captured.out.splitlines() == [
         ("service db: no user set; image db:1 runs as uid 100000 (no local user), "
          "gid 100001 (no local group); accepted"),
-        "service web: no user set; image web:1 would run as root; dcompose runs it as nobody (65534:65534)",
+        "service web: no user set; image web:1 would run as root; dockscreen runs it as nobody (65534:65534)",
     ]
     assert [cmd[-3:] for cmd in recorder.children] == [["pull", "cache", "web"]]  # db is already local
 
@@ -78,7 +78,7 @@ def test_audit_reports_a_failed_pull(monkeypatch, capsys, tmp_path):
 
 def test_audit_takes_no_arguments(capsys):
     assert commands.audit([], ["--remote"]) == 2
-    assert "usage: dcompose [compose options] audit" in capsys.readouterr().err
+    assert "usage: dockscreen [compose options] audit" in capsys.readouterr().err
 
 
 # --- harden ---------------------------------------------------------------------
@@ -91,7 +91,7 @@ def test_harden_writes_nothing_for_a_root_image_and_never_the_pull_pin(monkeypat
     assert commands.harden([], []) == 0
 
     out = capsys.readouterr().out
-    assert out.splitlines()[-1] == "services: {}"       # nothing is needed: dcompose does it all
+    assert out.splitlines()[-1] == "services: {}"       # nothing is needed: dockscreen does it all
     assert "pull_policy" not in out and "never" not in out  # the pin lives in the generated file only
     assert "user:" not in out.replace("sets no user", "")
     assert pulls(recorder) == [["pull", "web"]]  # the project's always policy: the images were looked at
@@ -109,7 +109,7 @@ def test_harden_sets_a_user_where_the_image_chose_one_that_is_not_acceptable(mon
     assert ("# note: service web: image web:1 chose a user that is not acceptable, "
             "so user is set explicitly") in out
     body = out.split("services:", 1)[1]
-    assert '"web":' in body and '    user: "${DCOMPOSE_UID}:${DCOMPOSE_GID}"' in body
+    assert '"web":' in body and '    user: "${DOCKSCREEN_UID}:${DOCKSCREEN_GID}"' in body
     assert '"db"' not in body  # its image's own user was fine
 
 

@@ -1,4 +1,4 @@
-"""Mechanical fixes for policy problems, for `dcompose fix`.
+"""Mechanical fixes for policy problems, for `dockscreen fix`.
 
 fix_config removes or replaces only what has a safe automatic fix; checking
 the result with policy.check_config reports what is left.
@@ -7,10 +7,10 @@ the result with policy.check_config reports what is left.
 import copy
 import os
 
-from dcompose import policy
+from dockscreen import policy
 
 # What fix puts into `user`: the allowed ids come from the environment (see ids.py), never from a literal.
-USER_TEMPLATE = "${DCOMPOSE_UID}:${DCOMPOSE_GID}"
+USER_TEMPLATE = "${DOCKSCREEN_UID}:${DOCKSCREEN_GID}"
 
 # Keys whose removal is a safe fix.
 REMOVABLE_SERVICE_KEYS = (

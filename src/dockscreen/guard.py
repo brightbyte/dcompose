@@ -6,8 +6,8 @@ import re
 import subprocess
 import sys
 
-from dcompose import ids, policy, realdocker
-from dcompose.text import printable
+from dockscreen import ids, policy, realdocker
+from dockscreen.text import printable
 
 COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 COMPOSE_VARS_IN_ENV_FILE = re.compile(r"^\s*(export\s+)?COMPOSE_(FILE|PATH_SEPARATOR)\s*=", re.MULTILINE)
@@ -33,21 +33,21 @@ def check(global_args, rules=policy.check_config):
 
 
 def context(project_dir):
-    """The policy context for project_dir, from dcompose's own environment."""
+    """The policy context for project_dir, from dockscreen's own environment."""
     uid, gid = ids.allowed(os.environ)
     return policy.Context(project_dir, uid, gid, tuple(extra_mount_dirs(os.environ)))
 
 
 def extra_mount_dirs(env):
-    """Directories from DCOMPOSE_DIRS (pathsep-separated) that mounts may come from.
+    """Directories from DOCKSCREEN_DIRS (pathsep-separated) that mounts may come from.
 
-    Read from dcompose's own environment only: the project's .env file is not
+    Read from dockscreen's own environment only: the project's .env file is not
     visible here, so a compose project cannot widen its own allowance.
     """
-    dirs = [d for d in env.get("DCOMPOSE_DIRS", "").split(os.pathsep) if d]
+    dirs = [d for d in env.get("DOCKSCREEN_DIRS", "").split(os.pathsep) if d]
     for d in dirs:
         if not os.path.isabs(d):
-            raise GuardError(f"DCOMPOSE_DIRS entry {d!r} is not an absolute path")
+            raise GuardError(f"DOCKSCREEN_DIRS entry {d!r} is not an absolute path")
     return dirs
 
 
@@ -59,7 +59,7 @@ def passes(global_args, rules=policy.check_config):
 def report(problems):
     """Print problems on stderr; True if there were none."""
     for problem in problems:
-        print(f"dcompose: refusing: {printable(problem)}", file=sys.stderr)
+        print(f"dockscreen: refusing: {printable(problem)}", file=sys.stderr)
     return not problems
 
 
@@ -132,7 +132,7 @@ def find_compose_dir(start, env_files=()):
 
 
 def refuse_compose_vars_in(path):
-    """dcompose does not read .env files, so a COMPOSE_FILE there would send compose to a
+    """dockscreen does not read .env files, so a COMPOSE_FILE there would send compose to a
     different project directory than the one we would check mounts against."""
     try:
         with open(path) as f:

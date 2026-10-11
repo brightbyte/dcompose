@@ -1,7 +1,7 @@
 import pytest
 
-from dcompose import cli, composerun, guard, policy
-from dcompose.commands import COMMANDS
+from dockscreen import cli, composerun, guard, policy
+from dockscreen.commands import COMMANDS
 
 
 @pytest.mark.parametrize("argv, expected", [
@@ -53,11 +53,11 @@ def test_custom_name_as_option_value_is_not_dispatched(forwarded, monkeypatch):
     (["up", "--help"], False),
     (["ps"], False),
 ])
-def test_dcompose_help_precedes_forwarding(forwarded, capsys, argv, expect_help):
+def test_dockscreen_help_precedes_forwarding(forwarded, capsys, argv, expect_help):
     cli.main(argv)
     assert forwarded == [argv]
     out = capsys.readouterr().out
-    assert ("dcompose commands:" in out) == expect_help
+    assert ("dockscreen commands:" in out) == expect_help
     if expect_help:
         assert "audit" in out and "fix" in out
 

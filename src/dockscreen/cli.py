@@ -8,8 +8,8 @@ parse is the position of the subcommand.
 import os
 import sys
 
-from dcompose import composerun, guard, ids, policy, realdocker, skipflag
-from dcompose.commands import ALIASES, COMMANDS
+from dockscreen import composerun, guard, ids, policy, realdocker, skipflag
+from dockscreen.commands import ALIASES, COMMANDS
 
 # Subcommands that create containers from the config. `alpha` is a group (older
 # compose has `alpha watch`); guarding it is cheap and errs on the safe side.
@@ -54,7 +54,7 @@ def forward(argv):
         binary = realdocker.docker_bin()
         os.execvp(binary, [binary, "compose", *argv])
     except FileNotFoundError:
-        sys.exit("dcompose: 'docker' not found in PATH")
+        sys.exit("dockscreen: 'docker' not found in PATH")
 
 
 def main(argv=None):
@@ -68,7 +68,7 @@ def main(argv=None):
     try:
         ids.export(os.environ)
     except ValueError as e:
-        print(f"dcompose: {e}", file=sys.stderr)
+        print(f"dockscreen: {e}", file=sys.stderr)
         return 1
 
     idx = find_subcommand(argv)
@@ -109,18 +109,18 @@ def wants_help(argv, idx):
 
 def print_help():
     lines = [
-        "dcompose: docker compose with security checks and extra subcommands.",
+        "dockscreen: docker compose with security checks and extra subcommands.",
         "Everything else is forwarded to docker compose unchanged.",
         "",
         f"{', '.join(sorted(RUNTIME_SUBCOMMANDS))} refuse to run if the config mounts paths outside",
-        "the project directory, runs as any user but the allowed one (you, or DCOMPOSE_UID/GID) or nobody,",
+        "the project directory, runs as any user but the allowed one (you, or DOCKSCREEN_UID/GID) or nobody,",
         "or asks for extra privileges. They run the project from the checked config, with cap_drop ALL and",
         "no-new-privileges added to every service that lacks them.",
         f"{', '.join(sorted(BUILD_SUBCOMMANDS))} refuse builds that read outside the project, use the",
-        "host network, run privileged or forward your SSH agent. See `dcompose audit`.",
+        "host network, run privileged or forward your SSH agent. See `dockscreen audit`.",
         f"{skipflag.FLAG}, before the subcommand, turns all of this off.",
         "",
-        "dcompose commands:",
+        "dockscreen commands:",
     ]
     for name, fn in sorted(COMMANDS.items()):
         if name in ALIASES:

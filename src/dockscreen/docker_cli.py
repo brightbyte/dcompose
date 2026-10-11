@@ -1,14 +1,14 @@
 """Entry point for a wrapper installed as `docker`.
 
-`docker compose` goes to dcompose, commands that start containers from images
+`docker compose` goes to dockscreen, commands that start containers from images
 go through the gate, everything else is exec'd to the real docker unchanged.
 """
 
 import os
 import sys
 
-from dcompose import cli, gate, guard, hostusers, imageuser, realdocker, skipflag
-from dcompose.dockerclient import Docker
+from dockscreen import cli, gate, guard, hostusers, imageuser, realdocker, skipflag
+from dockscreen.dockerclient import Docker
 
 # Global `docker` options that consume the following token as their value.
 DOCKER_OPTS_WITH_VALUE = frozenset({
@@ -32,7 +32,7 @@ def main(argv=None):
 
     if argv[idx] == "compose":
         if idx != 0:
-            print("dcompose: docker options before `compose` are not supported", file=sys.stderr)
+            print("dockscreen: docker options before `compose` are not supported", file=sys.stderr)
             return 1
         return cli.main(argv[1:])
 
@@ -80,7 +80,7 @@ def passthrough(argv):
     try:
         os.execvp(binary, [binary, *argv])
     except FileNotFoundError:
-        sys.exit("dcompose: 'docker' not found in PATH")
+        sys.exit("dockscreen: 'docker' not found in PATH")
 
 
 if __name__ == "__main__":

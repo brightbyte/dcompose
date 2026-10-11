@@ -1,6 +1,6 @@
 import os
 
-from dcompose import realdocker
+from dockscreen import realdocker
 
 
 def make_docker(directory):
@@ -24,7 +24,7 @@ def test_skips_our_own_wrapper_even_through_a_symlink(tmp_path):
 
 def test_explicit_path_wins(tmp_path):
     make_docker(tmp_path / "real")
-    env = {"DCOMPOSE_DOCKER": "/opt/docker", "PATH": str(tmp_path / "real")}
+    env = {"DOCKSCREEN_DOCKER": "/opt/docker", "PATH": str(tmp_path / "real")}
     assert realdocker.find(env, set()) == "/opt/docker"
 
 

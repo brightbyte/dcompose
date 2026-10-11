@@ -1,4 +1,4 @@
-"""Defaults dcompose adds to every service before running it.
+"""Defaults dockscreen adds to every service before running it.
 
 A project does not have to set these itself: a service without `cap_drop: [ALL]`
 or `no-new-privileges` gets them, and the names root and nobody in `user:` are resolved
@@ -11,7 +11,7 @@ import copy
 import json
 from typing import NamedTuple
 
-from dcompose import policy
+from dockscreen import policy
 
 CAP_DROP = "ALL"
 SECURITY_OPT = "no-new-privileges:true"
@@ -26,7 +26,7 @@ GROUP_NAMES = {"root": 0, "nobody": 65534, "nogroup": 65534}
 class Addition(NamedTuple):
     service: str
     key: str
-    message: str  # what was missing or a name, and what dcompose does about it
+    message: str  # what was missing or a name, and what dockscreen does about it
 
 
 def apply(config):
@@ -39,13 +39,13 @@ def apply(config):
             reason = "is not set" if not service.get("cap_drop") else f"does not include {CAP_DROP}"
             service["cap_drop"] = [*(service.get("cap_drop") or []), CAP_DROP]
             additions.append(Addition(
-                name, "cap_drop", f"cap_drop {reason}; dcompose adds cap_drop: {json.dumps([CAP_DROP])}"))
+                name, "cap_drop", f"cap_drop {reason}; dockscreen adds cap_drop: {json.dumps([CAP_DROP])}"))
         if not any(str(o) in policy.NO_NEW_PRIVILEGES for o in service.get("security_opt") or []):
             reason = "is not set" if not service.get("security_opt") else "does not include no-new-privileges"
             service["security_opt"] = [*(service.get("security_opt") or []), SECURITY_OPT]
             additions.append(Addition(
                 name, "security_opt",
-                f"security_opt {reason}; dcompose adds security_opt: {json.dumps([SECURITY_OPT])}"))
+                f"security_opt {reason}; dockscreen adds security_opt: {json.dumps([SECURITY_OPT])}"))
     return hardened, additions
 
 
@@ -62,18 +62,18 @@ def resolve_user_names(name, service):
     gid = str(GROUP_NAMES.get(group, group)) if has_group else uid
     resolved = f"{uid}:{gid}"
     service["user"] = resolved
-    message = f"user {spec!r} is a name; dcompose resolves it to {json.dumps(resolved)}"
+    message = f"user {spec!r} is a name; dockscreen resolves it to {json.dumps(resolved)}"
     return [Addition(name, "user", message)]
 
 
 def describe(additions):
-    """One line per addition: what was missing and what dcompose fills in."""
+    """One line per addition: what was missing and what dockscreen fills in."""
     return [f"service {a.service}: {a.message}" for a in additions]
 
 
 def defaults_note():
     """One general sentence for generated files, instead of a line per service."""
-    return (f'dcompose also adds cap_drop: ["{CAP_DROP}"] and security_opt: ["{SECURITY_OPT}"] to every '
+    return (f'dockscreen also adds cap_drop: ["{CAP_DROP}"] and security_opt: ["{SECURITY_OPT}"] to every '
             "service that lacks them, resolves the user names nobody and root to ids, and runs a service "
             "that sets no user as nobody when its image would run as root or it has bind mounts, "
             "so these are not repeated here")

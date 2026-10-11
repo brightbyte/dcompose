@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from dcompose import autofix, policy
+from dockscreen import autofix, policy
 
 UID = os.getuid()
 GID = os.getgid()

@@ -1,7 +1,7 @@
 import pytest
 from fakes import host_account
 
-from dcompose import hostusers
+from dockscreen import hostusers
 
 
 @pytest.mark.parametrize("spec", ["1000:1000", "0:0", "65534:65534", "1000:0"])

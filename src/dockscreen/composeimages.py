@@ -24,8 +24,8 @@ import json
 from collections.abc import Callable
 from typing import NamedTuple
 
-from dcompose import gate, imageuser
-from dcompose.dockerclient import DockerError
+from dockscreen import gate, imageuser
+from dockscreen.dockerclient import DockerError
 
 
 class ImageError(Exception):
@@ -208,7 +208,7 @@ def decide(config, to_run, tools):
 
 
 def finalize(config, prepared):
-    """(config to run, services whose user dcompose set from the vetted image). The input is left alone."""
+    """(config to run, services whose user dockscreen set from the vetted image). The input is left alone."""
     final = copy.deepcopy(config)
     vetted = set()
     for name, service in final["services"].items():
@@ -231,7 +231,7 @@ def finalize(config, prepared):
 
 
 def describe(config, prepared, local=None):
-    """One line per service without a user: what dcompose will do about it.
+    """One line per service without a user: what dockscreen will do about it.
 
     local: the host's accounts (imageuser.LocalIds), to say which local user an image's ids would be.
     """
@@ -240,7 +240,7 @@ def describe(config, prepared, local=None):
         decision = prepared.decisions.get(name)
         if decision is None:
             lines.append(f"service {name}: no user set and not started by default; "
-                         f"dcompose runs it as nobody ({gate.FALLBACK_USER}) if it is started")
+                         f"dockscreen runs it as nobody ({gate.FALLBACK_USER}) if it is started")
         elif decision.assessment.kind == "ok":
             who = imageuser.describe(decision.assessment.identity, local)
             lines.append(f"service {name}: no user set; image {decision.image} runs as {who}; accepted")
@@ -252,11 +252,11 @@ def describe(config, prepared, local=None):
 def fallback_text(decision, local):
     """Why the service is run as nobody, and how to run it as the image's user instead."""
     summary = gate.fallback_summary(f"image {decision.image}", decision.assessment, local, "service")
-    text = f"{summary}; dcompose runs it as nobody ({gate.FALLBACK_USER})"
+    text = f"{summary}; dockscreen runs it as nobody ({gate.FALLBACK_USER})"
     if decision.assessment.reason == "mounts":
         identity = decision.assessment.identity
-        text += (f". To run it as the image's user, set user: \"${{DCOMPOSE_UID}}:${{DCOMPOSE_GID}}\" "
-                 f"and run with DCOMPOSE_UID={identity.uid} DCOMPOSE_GID={identity.gid}")
+        text += (f". To run it as the image's user, set user: \"${{DOCKSCREEN_UID}}:${{DOCKSCREEN_GID}}\" "
+                 f"and run with DOCKSCREEN_UID={identity.uid} DOCKSCREEN_GID={identity.gid}")
     return text
 
 

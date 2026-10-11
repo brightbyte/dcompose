@@ -1,6 +1,6 @@
 import pytest
 
-from dcompose import cli, docker_cli, skipflag
+from dockscreen import cli, docker_cli, skipflag
 
 FLAG = "--skip-security-gate"
 
@@ -26,7 +26,7 @@ def test_banner_goes_to_stderr(capsys):
     assert "security gate is disabled" in captured.err and "no defaults are added" in captured.err
 
 
-def test_dcompose_with_the_flag_is_plain_compose_with_a_warning(forwarded, monkeypatch, capsys):
+def test_dockscreen_with_the_flag_is_plain_compose_with_a_warning(forwarded, monkeypatch, capsys):
     monkeypatch.setattr(cli.composerun, "run", lambda argv, idx: 1 / 0)
     monkeypatch.setattr(cli.guard, "passes", lambda *a: 1 / 0)
 
@@ -36,7 +36,7 @@ def test_dcompose_with_the_flag_is_plain_compose_with_a_warning(forwarded, monke
     assert "security gate is disabled" in capsys.readouterr().err
 
 
-def test_dcompose_flag_also_skips_the_extra_subcommands(forwarded):
+def test_dockscreen_flag_also_skips_the_extra_subcommands(forwarded):
     cli.main([FLAG, "audit"])
     assert forwarded == [["audit"]]  # compose gets it unchanged; nothing of ours runs
 
@@ -53,7 +53,7 @@ def test_docker_with_the_flag_is_plain_docker_with_a_warning(monkeypatch, capsys
 
     docker_cli.main(argv)
 
-    assert calls == [expected]  # no defaults added, no gate, no dcompose
+    assert calls == [expected]  # no defaults added, no gate, no dockscreen
     assert "security gate is disabled" in capsys.readouterr().err
 
 

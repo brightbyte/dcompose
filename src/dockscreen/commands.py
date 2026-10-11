@@ -11,7 +11,7 @@ import os
 import subprocess
 import sys
 
-from dcompose import (
+from dockscreen import (
     autofix,
     composeimages,
     composerun,
@@ -22,7 +22,7 @@ from dcompose import (
     realdocker,
     shellenv,
 )
-from dcompose.text import printable
+from dockscreen.text import printable
 
 COMMANDS = {}
 ALIASES = {}  # alias -> command it stands for
@@ -51,7 +51,7 @@ def doctor(global_args, args):
 def audit(global_args, args):
     """Run the checks that guard `up` without starting anything; pulls and builds images as up would."""
     if args:
-        print("usage: dcompose [compose options] audit", file=sys.stderr)
+        print("usage: dockscreen [compose options] audit", file=sys.stderr)
         return 2
 
     lines = []
@@ -72,7 +72,7 @@ def audit(global_args, args):
         lines.append("the images were not looked at because of the problems above: "
                      "nothing was pulled or built")
     elif config is not None:
-        print("dcompose: pulling or building the images as `up` would, to look at the users they run as",
+        print("dockscreen: pulling or building the images as `up` would, to look at the users they run as",
               file=sys.stderr)
         with composerun.generated(global_args, project_dir) as command:
             prepared = composeimages.prepare(command(hardened), hardened, [], tools)
@@ -81,7 +81,7 @@ def audit(global_args, args):
 
     passed = guard.report(problems)
     if passed:
-        print("dcompose: audit passed", file=sys.stderr)
+        print("dockscreen: audit passed", file=sys.stderr)
     if config is not None:
         for line in lines:
             print(printable(line))
@@ -94,7 +94,7 @@ def audit(global_args, args):
 def harden(global_args, args):
     """Print a compose override that fixes what can be fixed; exit 1 if problems remain.
 
-    The patch is relative to the merged config as dcompose will run it, defaults
+    The patch is relative to the merged config as dockscreen will run it, defaults
     included: only what is needed on top of them to pass the audit is written out,
     and one comment says what is added automatically. Mount sources outside the
     project become placeholders to edit; problems without a safe automatic fix are
@@ -109,21 +109,21 @@ def harden(global_args, args):
         if guard.is_remote(global_args, os.environ, tools.docker):
             raise guard.GuardError(guard.REMOTE_MESSAGE)
     except (guard.GuardError, ValueError) as e:
-        print(f"dcompose: {printable(e)}", file=sys.stderr)
+        print(f"dockscreen: {printable(e)}", file=sys.stderr)
         return 1
 
     fixed = autofix.fix_config(base, static)
     remaining = policy.check_config(autofix.resolve_user_template(fixed, static), static)
     notes = [hardening.defaults_note()]
     if remaining:
-        print("dcompose: the images were not looked at because of the problems below: "
+        print("dockscreen: the images were not looked at because of the problems below: "
               "nothing was pulled or built", file=sys.stderr)
     else:
         remaining, notes = fix_image_users(global_args, project_dir, fixed, notes, tools)
 
     sys.stdout.write(patch.render(base, fixed, remaining, notes=notes))
     for problem in remaining:
-        print(f"dcompose: cannot fix automatically: {printable(problem)}", file=sys.stderr)
+        print(f"dockscreen: cannot fix automatically: {printable(problem)}", file=sys.stderr)
     return 1 if remaining else 0
 
 

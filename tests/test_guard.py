@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from dcompose import guard
+from dockscreen import guard
 
 
 def test_project_directory_is_dir_of_first_file(tmp_path):
@@ -38,13 +38,13 @@ def test_missing_compose_file_is_refused(tmp_path):
 
 
 def test_extra_mount_dirs_are_split_on_pathsep():
-    assert guard.extra_mount_dirs({"DCOMPOSE_DIRS": "/a:/b/c::"}) == ["/a", "/b/c"]
+    assert guard.extra_mount_dirs({"DOCKSCREEN_DIRS": "/a:/b/c::"}) == ["/a", "/b/c"]
     assert guard.extra_mount_dirs({}) == []
 
 
 def test_relative_extra_mount_dir_is_refused():
     with pytest.raises(guard.GuardError):
-        guard.extra_mount_dirs({"DCOMPOSE_DIRS": "/a:relative"})
+        guard.extra_mount_dirs({"DOCKSCREEN_DIRS": "/a:relative"})
 
 
 @pytest.mark.parametrize("line", [

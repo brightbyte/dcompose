@@ -87,9 +87,9 @@ class Context(NamedTuple):
     project_dir: str
     uid: int
     gid: int
-    extra_dirs: tuple = ()  # DCOMPOSE_DIRS
+    extra_dirs: tuple = ()  # DOCKSCREEN_DIRS
     # Services whose unset `user` is acceptable because their image was looked at and would
-    # run as an acceptable user (see composeimages). Only dcompose sets this, never the project.
+    # run as an acceptable user (see composeimages). Only dockscreen sets this, never the project.
     vetted: frozenset = frozenset()
 
     @property
@@ -157,7 +157,7 @@ def check_id(kind, value, allowed):
     number = parse_id(value)
     if number is None:
         return [(f"{kind} {value!r} is not numeric; use an id (names are resolved by the image, which can "
-                 "map them to root; only nobody and root are resolved by dcompose, in `user:`)")]
+                 "map them to root; only nobody and root are resolved by dockscreen, in `user:`)")]
     if number not in allowed:
         return [f"{kind} {value!r} is neither the allowed id nor {NOBODY} (nobody)"]
     return []
@@ -417,7 +417,7 @@ def check_file_source(item, ctx):
         problems.append("external resources are not allowed, they may belong to another project")
     if item.get("environment"):
         problems.append(
-            f"environment {item['environment']!r} copies a variable from dcompose's environment")
+            f"environment {item['environment']!r} copies a variable from dockscreen's environment")
     source = item.get("file")
     if source and not is_inside(source, ctx.project_dir):
         problems.append(f"file {source!r} is outside {ctx.project_dir}")
@@ -428,7 +428,7 @@ def check_file_source(item, ctx):
 
 def roots_text(mount_roots):
     project_dir, *extra = mount_roots
-    return f"{project_dir}" + (" and DCOMPOSE_DIRS" if extra else "")
+    return f"{project_dir}" + (" and DOCKSCREEN_DIRS" if extra else "")
 
 
 def is_inside_any(path, roots):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run dcompose from a checkout without installing it."""
+"""Run dockscreen from a checkout without installing it."""
 
 import os
 import sys
@@ -7,7 +7,7 @@ import sys
 # realpath so that a symlink on PATH still finds the checkout
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "src"))
 
-from dcompose.cli import main  # noqa: E402
+from dockscreen.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     sys.exit(main())

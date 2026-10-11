@@ -15,12 +15,12 @@ def docker_bin():
 
 
 def find(env, wrappers):
-    """DCOMPOSE_DOCKER if set, else the first `docker` on PATH that is not one of our wrappers.
+    """DOCKSCREEN_DOCKER if set, else the first `docker` on PATH that is not one of our wrappers.
 
     Empty PATH entries (meaning the current directory) are skipped: a hostile
     project must not be able to supply the binary we run.
     """
-    explicit = env.get("DCOMPOSE_DOCKER")
+    explicit = env.get("DOCKSCREEN_DOCKER")
     if explicit:
         return explicit
     for directory in env.get("PATH", "").split(os.pathsep):

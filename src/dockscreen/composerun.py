@@ -20,9 +20,9 @@ import subprocess
 import sys
 import tempfile
 
-from dcompose import composeimages, gate, guard, hardening, imageuser, policy, realdocker, shellenv
-from dcompose.dockerclient import Docker
-from dcompose.text import printable
+from dockscreen import composeimages, gate, guard, hardening, imageuser, policy, realdocker, shellenv
+from dockscreen.dockerclient import Docker
+from dockscreen.text import printable
 
 # Options that select the files and the project; ours replace them.
 REPLACED_OPTIONS = ("--file", "-f", "--project-directory", "--project-name", "-p")
@@ -52,9 +52,9 @@ def run(argv, idx, tools=None):
         return 1
 
     if additions:
-        print(f"dcompose: {printable(hardening.summary(additions))}", file=sys.stderr)
+        print(f"dockscreen: {printable(hardening.summary(additions))}", file=sys.stderr)
     for line in shellenv.describe(hardened, os.environ):
-        print(f"dcompose: {printable(line)}", file=sys.stderr)
+        print(f"dockscreen: {printable(line)}", file=sys.stderr)
     with generated(global_args, project_dir) as command:
         prepared = composeimages.prepare(command(hardened), hardened, args, tools)
         if not guard.report(prepared.problems):
@@ -63,7 +63,7 @@ def run(argv, idx, tools=None):
         if not guard.report(policy.check_config(final, ctx._replace(vetted=vetted))):  # what will run
             return 1
         for notice in composeimages.notices(prepared, tools.gate_ctx.local):
-            print(f"dcompose: {printable(notice)}", file=sys.stderr)
+            print(f"dockscreen: {printable(notice)}", file=sys.stderr)
         return tools.run_child([*command(final), *argv[idx:]])
 
 
@@ -80,7 +80,7 @@ def generated(global_args, project_dir):
     ready for a subcommand to be appended. Everything is removed afterwards.
     """
     counter = itertools.count()
-    with tempfile.TemporaryDirectory(prefix="dcompose-") as directory:
+    with tempfile.TemporaryDirectory(prefix="dockscreen-") as directory:
         def command(config):
             path = os.path.join(directory, f"compose-{next(counter)}.yaml")
             with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
@@ -108,7 +108,7 @@ def run_child(cmd):
     try:
         process = subprocess.Popen(cmd)
     except FileNotFoundError:
-        print("dcompose: 'docker' not found in PATH", file=sys.stderr)
+        print("dockscreen: 'docker' not found in PATH", file=sys.stderr)
         return 127
     def forward(number, frame):
         process.send_signal(number)

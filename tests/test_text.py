@@ -1,7 +1,7 @@
 import os
 
-from dcompose import autofix, commands, guard, patch, policy
-from dcompose.text import printable
+from dockscreen import autofix, commands, guard, patch, policy
+from dockscreen.text import printable
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -33,7 +33,7 @@ def test_patch_quotes_unusual_keys():
 
 
 def test_refusal_output_cannot_forge_lines_or_move_the_cursor(capsys):
-    guard.report(["bind mount '/x\ndcompose: audit passed\x1b[2K' is outside /p"])
+    guard.report(["bind mount '/x\ndockscreen: audit passed\x1b[2K' is outside /p"])
     err = capsys.readouterr().err
     assert err.count("\n") == 1  # the one print() newline
     assert "\x1b" not in err.replace("\\x1b", "")
@@ -42,7 +42,7 @@ def test_refusal_output_cannot_forge_lines_or_move_the_cursor(capsys):
 def test_audit_info_lines_are_escaped(monkeypatch, capsys, tmp_path):
     from fakes import FakeImages, make_tools
 
-    from dcompose import composerun
+    from dockscreen import composerun
     image = "x\x1b[31m:1"
     cfg = {"name": "p", "services": {"web": {"image": image}}}
     monkeypatch.setattr(guard, "inspect", lambda global_args: (cfg, str(tmp_path)))

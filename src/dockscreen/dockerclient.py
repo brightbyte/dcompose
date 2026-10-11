@@ -5,7 +5,7 @@ import json
 import subprocess
 import tarfile
 
-from dcompose import realdocker
+from dockscreen import realdocker
 
 MAX_FILE_BYTES = 1 << 20  # /etc/passwd and /etc/group come from a hostile image
 

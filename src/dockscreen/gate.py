@@ -27,9 +27,9 @@ import os
 import sys
 from typing import NamedTuple
 
-from dcompose import hostusers, imageuser, runargs
-from dcompose.dockerclient import DockerError
-from dcompose.text import printable
+from dockscreen import hostusers, imageuser, runargs
+from dockscreen.dockerclient import DockerError
+from dockscreen.text import printable
 
 # Inserted before the user's own arguments, so the user can override both
 # (for example `--cap-add NET_BIND_SERVICE`).
@@ -200,7 +200,7 @@ def audit(ctx, args):
         if parsed.command or any(not t.startswith("--user=") for t in parsed.create_args[:-1]):
             raise runargs.ParseError("only --user, --as and --as-me can come before the image")
     except runargs.ParseError as e:
-        print(f"dcompose: {printable(e)}\nusage: docker audit [--user UID:GID | --as NAME | --as-me] IMAGE",
+        print(f"dockscreen: {printable(e)}\nusage: docker audit [--user UID:GID | --as NAME | --as-me] IMAGE",
               file=sys.stderr)
         return 2
     except hostusers.UserError as e:
@@ -211,7 +211,7 @@ def audit(ctx, args):
     image = parsed.image
     code, container = ctx.docker.create(["--pull=never", *parsed.create_args])
     if container is None:
-        print(f"dcompose: image {printable(image)} is not available locally; run `docker pull` first "
+        print(f"dockscreen: image {printable(image)} is not available locally; run `docker pull` first "
               "(pulling does not run the image), then audit it", file=sys.stderr)
         return code or 1
     try:
@@ -328,10 +328,10 @@ def explain(assessment):
 
 
 def notice(text):
-    print(f"dcompose: {printable(text)}", file=sys.stderr)
+    print(f"dockscreen: {printable(text)}", file=sys.stderr)
 
 
 def refuse(problems):
     for problem in problems:
-        print(f"dcompose: refusing: {printable(problem)}", file=sys.stderr)
+        print(f"dockscreen: refusing: {printable(problem)}", file=sys.stderr)
     return 1

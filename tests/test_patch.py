@@ -1,6 +1,6 @@
 import os
 
-from dcompose import autofix, commands, guard, patch, policy
+from dockscreen import autofix, commands, guard, patch, policy
 
 UID = os.getuid()
 GID = os.getgid()
@@ -20,8 +20,8 @@ def test_patch_resets_removed_keys_and_overrides_changed_ones():
 
     lines = patch.render(original, fixed).splitlines()
 
-    assert '    user: "${DCOMPOSE_UID}:${DCOMPOSE_GID}"' in lines
-    assert any("DCOMPOSE_UID" in line and line.startswith("# note") for line in lines)
+    assert '    user: "${DOCKSCREEN_UID}:${DOCKSCREEN_GID}"' in lines
+    assert any("DOCKSCREEN_UID" in line and line.startswith("# note") for line in lines)
     assert "    privileged: !reset null" in lines
     assert f'    group_add: !override ["{GID}"]' in lines
     # untouched keys are not repeated

@@ -1,10 +1,10 @@
-"""Fakes for the docker side of dcompose: images with users, and the compose commands around them."""
+"""Fakes for the docker side of dockscreen: images with users, and the compose commands around them."""
 import json
 import os
 import subprocess
 
-from dcompose import composeimages, gate, hostusers
-from dcompose.dockerclient import DockerError
+from dockscreen import composeimages, gate, hostusers
+from dockscreen.dockerclient import DockerError
 
 PASSWD = ("app:x:100000:100001::/:/bin/sh\nroot:x:0:0::/:/bin/sh\nweb:x:1000:1000::/:/bin/sh\n"
           "pg:x:998:998::/:/bin/sh\nnobody:x:65534:65534::/:/bin/sh\n")

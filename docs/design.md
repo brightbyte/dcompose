@@ -1,10 +1,10 @@
-# dcompose design
+# dockscreen design
 
-Audience: people who change dcompose or review its security. Users want the README.
+Audience: people who change dockscreen or review its security. Users want the README.
 
 ## Purpose
 
-`docker compose up` on a project you just cloned gives that project whatever access the docker daemon has: in effect root on the host. The same goes for `docker run` on an image you just pulled. dcompose sits in front of `docker compose`, and optionally in front of `docker`. It refuses a project or image that would reach outside its own directory or run with privileges, and adds hardening defaults to what it lets through. Everything it does not need to look at is passed to the real docker unchanged.
+`docker compose up` on a project you just cloned gives that project whatever access the docker daemon has: in effect root on the host. The same goes for `docker run` on an image you just pulled. dockscreen sits in front of `docker compose`, and optionally in front of `docker`. It refuses a project or image that would reach outside its own directory or run with privileges, and adds hardening defaults to what it lets through. Everything it does not need to look at is passed to the real docker unchanged.
 
 ## Threat model
 
@@ -27,11 +27,11 @@ Out of scope:
 - Network exposure (`ports`, `extra_hosts`, `dns`).
 - Anything chosen on the command line (`run -v`, `exec --privileged`).
 - `${VAR}` interpolation copying values from your shell into a container.
-- Clients that talk to the docker socket directly: scripts, IDEs, other tools. dcompose is a wrapper, not a daemon plugin.
+- Clients that talk to the docker socket directly: scripts, IDEs, other tools. dockscreen is a wrapper, not a daemon plugin.
 
 ## Approach
 
-1. Let docker parse its own input. dcompose never parses compose files or mirrors `docker run`'s option handling to decide safety. It asks the real tool what it would do (`docker compose config`, `docker create` then `docker inspect`) and checks the result.
+1. Let docker parse its own input. dockscreen never parses compose files or mirrors `docker run`'s option handling to decide safety. It asks the real tool what it would do (`docker compose config`, `docker create` then `docker inspect`) and checks the result.
 2. Check exactly what will run. For compose, the checked config is written to a file and handed to compose as its only input. For `docker run`, the created container is checked before it is started.
 3. Allowlist, fail closed. A compose key that is not listed is refused, so a new Compose feature stays denied until someone reviews it. Any error while inspecting counts as a refusal.
 4. Decide users by ids, never by names. Docker resolves names in the image's own `/etc/passwd`, which a hostile image controls.
@@ -70,10 +70,10 @@ Every structure has its own key list: service, mount, build, volume, network, se
 
 | Area | Rule |
 |---|---|
-| `user`, `group_add`, hook `user` | numeric `uid:gid`; each id is the allowed one (`DCOMPOSE_UID`/`DCOMPOSE_GID`, by default the real user) or 65534 |
+| `user`, `group_add`, hook `user` | numeric `uid:gid`; each id is the allowed one (`DOCKSCREEN_UID`/`DOCKSCREEN_GID`, by default the real user) or 65534 |
 | privileges | `privileged`, `cap_add`, `devices`, `gpus`, `cgroup_parent`, device reservations: refused; `cap_drop` must include `ALL`; `security_opt` must be exactly no-new-privileges; `runtime` only `runc` |
 | namespaces | `pid`, `ipc`, `uts`, `userns_mode`, `cgroup`, `network_mode`: no `host`, no `container:` |
-| mounts | bind sources, after `realpath`, inside the project or `DCOMPOSE_DIRS`; types `volume`, `tmpfs` and `image` allowed |
+| mounts | bind sources, after `realpath`, inside the project or `DOCKSCREEN_DIRS`; types `volume`, `tmpfs` and `image` allowed |
 | files read on the host | `env_file`, `label_file`, secret and config `file`, build contexts, `develop.watch` paths: inside the project |
 | volumes and networks | named `<project>_<key>`, not `external`; volumes use the local driver, and `driver_opts` may not turn one into a bind or network mount; networks use `bridge` or `none` |
 | `develop.watch` | no `sync+exec`, which runs a command in the container |
@@ -116,18 +116,18 @@ Why each rule:
   | `--as-me` | `--user=` your own `uid:gid` | |
 
 - A daemon that is not the local default is refused (`-H`, `--context`, a non-unix `DOCKER_HOST`, a non-default context): host ids and paths mean nothing there.
-- `docker compose` goes to dcompose. Everything else is exec'd to the real docker unchanged. The real docker is `DCOMPOSE_DOCKER`, or else the next `docker` on `PATH` that is not the wrapper. Empty `PATH` entries are skipped, so the current directory cannot supply it.
+- `docker compose` goes to dockscreen. Everything else is exec'd to the real docker unchanged. The real docker is `DOCKSCREEN_DOCKER`, or else the next `docker` on `PATH` that is not the wrapper. Empty `PATH` entries are skipped, so the current directory cannot supply it.
 
 ### Configuration and escape hatch
 
 | Setting | Effect |
 |---|---|
-| `DCOMPOSE_UID`, `DCOMPOSE_GID` | the one id that compose files may name besides nobody; defaults to the real user |
-| `DCOMPOSE_DIRS` | extra absolute directories that bind mounts may come from |
-| `DCOMPOSE_DOCKER` | path of the real docker |
+| `DOCKSCREEN_UID`, `DOCKSCREEN_GID` | the one id that compose files may name besides nobody; defaults to the real user |
+| `DOCKSCREEN_DIRS` | extra absolute directories that bind mounts may come from |
+| `DOCKSCREEN_DOCKER` | path of the real docker |
 | `--skip-security-gate` | before the subcommand only: no checks, no defaults, and a warning on every use |
 
-These are read from dcompose's own environment, never from the project's `.env`. dcompose exports `UID`, `GID`, `DCOMPOSE_UID` and `DCOMPOSE_GID` for compose files to interpolate.
+These are read from dockscreen's own environment, never from the project's `.env`. dockscreen exports `UID`, `GID`, `DOCKSCREEN_UID` and `DOCKSCREEN_GID` for compose files to interpolate.
 
 Text from the project or the image is escaped (`text.printable`) before it is printed or written into a `harden` patch, so it cannot forge output lines or send terminal control sequences.
 
@@ -144,7 +144,7 @@ Text from the project or the image is escaped (`text.printable`) before it is pr
 | `pull_policy: never` only in the generated file | pin in the project or in `harden` output | none; pinning in the project would silently stop its updates |
 | Pull and build before deciding | decide only on images already present | `up`, `audit` and `harden` can pull and build, but only after the static checks pass |
 | Wrapper on `PATH` | daemon authorization plugin | anything that talks to the socket directly is not covered |
-| Remote daemons refused (`docker` wrapper) | check anyway | dcompose does not work with remote contexts |
+| Remote daemons refused (`docker` wrapper) | check anyway | dockscreen does not work with remote contexts |
 
 ## Known gaps
 

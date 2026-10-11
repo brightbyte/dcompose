@@ -5,8 +5,8 @@ import subprocess
 import pytest
 from fakes import FakeImages, Local, make_tools
 
-from dcompose import autofix, composeimages, gate, policy
-from dcompose.dockerclient import DockerError
+from dockscreen import autofix, composeimages, gate, policy
+from dockscreen.dockerclient import DockerError
 
 UID, GID = os.getuid(), os.getgid()
 NOBODY = "65534:65534"
@@ -262,11 +262,11 @@ def test_descriptions_and_notices():
     assert composeimages.describe(config, prepared) == [
         "service db: no user set; image db:1 runs as uid 100000, gid 100001; accepted",
         ("service debug: no user set and not started by default; "
-         "dcompose runs it as nobody (65534:65534) if it is started"),
-        "service web: no user set; image web:1 would run as root; dcompose runs it as nobody (65534:65534)",
+         "dockscreen runs it as nobody (65534:65534) if it is started"),
+        "service web: no user set; image web:1 would run as root; dockscreen runs it as nobody (65534:65534)",
     ]
     assert composeimages.notices(prepared) == [
-        "service web: image web:1 would run as root; dcompose runs it as nobody (65534:65534)"]
+        "service web: image web:1 would run as root; dockscreen runs it as nobody (65534:65534)"]
 
 
 def test_the_audit_says_which_local_accounts_an_images_ids_are():
@@ -312,11 +312,11 @@ def test_a_service_with_mounts_runs_as_nobody_and_the_images_ids_are_echoed_in_c
     assert prepared.problems == []
     assert composeimages.describe(config, prepared) == [
         ("service web: no user set; image web:1 would run as uid 100000, gid 100001, and the service has "
-         "bind mounts; dcompose runs it as nobody (65534:65534). To run it as the image's user, set user: "
-         '"${DCOMPOSE_UID}:${DCOMPOSE_GID}" and run with DCOMPOSE_UID=100000 DCOMPOSE_GID=100001')]
+         "bind mounts; dockscreen runs it as nobody (65534:65534). To run it as the image's user, set user: "
+         '"${DOCKSCREEN_UID}:${DOCKSCREEN_GID}" and run with DOCKSCREEN_UID=100000 DOCKSCREEN_GID=100001')]
     notice = composeimages.notices(prepared)[0]
     assert notice.startswith("service web: image web:1 would run as uid 100000")
-    assert notice.endswith("run with DCOMPOSE_UID=100000 DCOMPOSE_GID=100001")
+    assert notice.endswith("run with DOCKSCREEN_UID=100000 DOCKSCREEN_GID=100001")
 
 
 def test_mounts_make_a_host_account_id_a_fallback_not_a_refusal():
@@ -342,7 +342,7 @@ def test_finalize_runs_a_mounting_service_as_nobody_in_the_generated_file():
     assert final["services"]["db"]["user"] == "100000:100001" and vetted == {"db"}
 
 
-def test_the_vetting_belongs_to_dcompose_not_to_the_project():
+def test_the_vetting_belongs_to_dockscreen_not_to_the_project():
     # No key in a compose file can mark a service as vetted: it lives in the Context only.
     config = project(web={"x-vetted": True, "vetted": True})
     problems = policy.check_config(config, policy.Context("/p", UID, GID))

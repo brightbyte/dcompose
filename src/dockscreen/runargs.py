@@ -9,7 +9,7 @@ daemon's.
 
 from typing import NamedTuple
 
-from dcompose import hostusers
+from dockscreen import hostusers
 
 # Long options of `docker run`/`create` that take a value in the next argument.
 LONG_VALUE_FLAGS = frozenset({

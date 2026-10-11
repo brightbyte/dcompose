@@ -1,12 +1,12 @@
 """The uid/gid compose files see, and the ids the policy accepts.
 
-dcompose exports two pairs of variables for compose files to interpolate:
+dockscreen exports two pairs of variables for compose files to interpolate:
   UID, GID                  the real current user, always
-  DCOMPOSE_UID/GID          the ids containers are allowed to run as: the
+  DOCKSCREEN_UID/GID          the ids containers are allowed to run as: the
                             values already set in the environment, else the
                             real ones
 
-Setting DCOMPOSE_UID/GID turns the rule from "run as me" into "run as exactly
+Setting DOCKSCREEN_UID/GID turns the rule from "run as me" into "run as exactly
 this id": the real user is then refused unless it is the same id. `nobody` is
 accepted in either case (see policy.check_user).
 """
@@ -17,8 +17,8 @@ import os
 def allowed(env):
     """(uid, gid) that containers may run as."""
     return (
-        pick(env, "DCOMPOSE_UID", os.getuid()),
-        pick(env, "DCOMPOSE_GID", os.getgid()),
+        pick(env, "DOCKSCREEN_UID", os.getuid()),
+        pick(env, "DOCKSCREEN_GID", os.getgid()),
     )
 
 
@@ -31,7 +31,7 @@ def pick(env, name, default):
     return int(value)
 
 
-EXPORTED = ("UID", "GID", "DCOMPOSE_UID", "DCOMPOSE_GID")
+EXPORTED = ("UID", "GID", "DOCKSCREEN_UID", "DOCKSCREEN_GID")
 
 
 def export(env):
@@ -39,6 +39,6 @@ def export(env):
     allowed_uid, allowed_gid = allowed(env)
     env["UID"] = str(os.getuid())
     env["GID"] = str(os.getgid())
-    env["DCOMPOSE_UID"] = str(allowed_uid)
-    env["DCOMPOSE_GID"] = str(allowed_gid)
+    env["DOCKSCREEN_UID"] = str(allowed_uid)
+    env["DOCKSCREEN_GID"] = str(allowed_gid)
 

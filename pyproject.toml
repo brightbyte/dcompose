@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dcompose"
+name = "dockscreen"
 version = "0.1.0"
 description = "Wrapper around docker compose with modified behavior and extra subcommands"
 requires-python = ">=3.10"
@@ -13,8 +13,8 @@ dependencies = []
 dev = ["pytest"]
 
 [project.scripts]
-dcompose = "dcompose.cli:main"
-ddocker = "dcompose.docker_cli:main"
+dockscreen = "dockscreen.cli:main"
+ddocker = "dockscreen.docker_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

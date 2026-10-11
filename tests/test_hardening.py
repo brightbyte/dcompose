@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from dcompose import commands, guard, hardening, patch, policy
+from dockscreen import commands, guard, hardening, patch, policy
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -17,8 +17,8 @@ def test_missing_defaults_are_added_and_described():
     web = hardened["services"]["web"]
     assert web["cap_drop"] == ["ALL"] and web["security_opt"] == ["no-new-privileges:true"]
     assert hardening.describe(additions) == [
-        'service web: cap_drop is not set; dcompose adds cap_drop: ["ALL"]',
-        'service web: security_opt is not set; dcompose adds security_opt: ["no-new-privileges:true"]',
+        'service web: cap_drop is not set; dockscreen adds cap_drop: ["ALL"]',
+        'service web: security_opt is not set; dockscreen adds security_opt: ["no-new-privileges:true"]',
     ]
     assert hardening.summary(additions) == "hardening defaults added: web (cap_drop, security_opt)"
 
@@ -30,9 +30,9 @@ def test_existing_entries_are_kept_and_only_the_missing_one_is_added():
     assert web["cap_drop"] == ["NET_RAW", "ALL"]
     assert web["security_opt"] == ["seccomp=unconfined", "no-new-privileges:true"]
     assert hardening.describe(additions) == [
-        'service web: cap_drop does not include ALL; dcompose adds cap_drop: ["ALL"]',
+        'service web: cap_drop does not include ALL; dockscreen adds cap_drop: ["ALL"]',
         ('service web: security_opt does not include no-new-privileges; '
-         'dcompose adds security_opt: ["no-new-privileges:true"]'),
+         'dockscreen adds security_opt: ["no-new-privileges:true"]'),
     ]
 
 
@@ -67,7 +67,7 @@ def test_audit_reports_the_additions_and_hints_at_harden(monkeypatch, capsys, tm
 
     captured = capsys.readouterr()
     assert "audit passed" in captured.err
-    assert 'service web: cap_drop is not set; dcompose adds cap_drop: ["ALL"]' in captured.out
+    assert 'service web: cap_drop is not set; dockscreen adds cap_drop: ["ALL"]' in captured.out
     assert "the harden subcommand prints a compose override" in captured.out
 
 
@@ -85,7 +85,7 @@ def two_services(**web):
     }}
 
 
-def test_harden_leaves_out_what_dcompose_adds_and_says_so_once(monkeypatch, capsys, tmp_path):
+def test_harden_leaves_out_what_dockscreen_adds_and_says_so_once(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(guard, "inspect", lambda global_args: (two_services(), str(tmp_path)))
 
     assert commands.harden([], []) == 0
@@ -108,7 +108,7 @@ def test_harden_writes_only_what_is_needed_on_top_of_the_defaults(monkeypatch, c
     commands.harden([], [])
 
     body = capsys.readouterr().out.split("services:", 1)[1]
-    assert '    user: "${DCOMPOSE_UID}:${DCOMPOSE_GID}"' in body
+    assert '    user: "${DOCKSCREEN_UID}:${DOCKSCREEN_GID}"' in body
     assert '    security_opt: !override ["no-new-privileges:true"]' in body
     assert "cap_drop" not in body  # [NET_RAW, ALL] after the default: already fine
     assert '"db"' not in body       # a service with nothing to fix is not mentioned
@@ -121,7 +121,7 @@ def test_the_audit_still_reports_every_service(monkeypatch, capsys, tmp_path):
 
     out = capsys.readouterr().out
     for service in ("web", "db"):
-        assert f'service {service}: cap_drop is not set; dcompose adds cap_drop: ["ALL"]' in out
+        assert f'service {service}: cap_drop is not set; dockscreen adds cap_drop: ["ALL"]' in out
         assert f"service {service}: security_opt is not set" in out
 
 
@@ -131,7 +131,7 @@ def test_fix_is_an_alias_of_harden_and_is_listed_once_in_the_help():
 
 
 def test_patch_header_names_the_command():
-    assert "`dcompose harden`" in patch.HEADER
+    assert "`dockscreen harden`" in patch.HEADER
 
 
 # --- the names nobody and root in `user:` ------------------------------------------
@@ -155,7 +155,7 @@ def test_user_names_root_and_nobody_are_resolved_to_ids(spec, resolved):
     assert original["services"]["web"]["user"] == spec  # the input is left alone
     # the first line: the same service also lacks the other defaults
     assert hardening.describe(additions)[0] == (
-        f'service web: user {spec!r} is a name; dcompose resolves it to "{resolved}"')
+        f'service web: user {spec!r} is a name; dockscreen resolves it to "{resolved}"')
 
 
 @pytest.mark.parametrize("spec", ["1000:1000", "65534:65534", "alice", "www-data:www-data", "1000"])
@@ -193,6 +193,6 @@ def test_the_audit_reports_the_resolution_and_harden_does_not_repeat_it(monkeypa
     commands.harden([], [])
     harden_out = capsys.readouterr().out
 
-    assert 'service web: user \'nobody\' is a name; dcompose resolves it to "65534:65534"' in audit_out
+    assert 'service web: user \'nobody\' is a name; dockscreen resolves it to "65534:65534"' in audit_out
     assert harden_out.splitlines()[-1] == "services: {}"  # automatic, like the other defaults
     assert "resolves the user names nobody and root to ids" in harden_out

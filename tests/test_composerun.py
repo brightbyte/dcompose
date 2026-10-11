@@ -3,7 +3,7 @@ import os
 import pytest
 from fakes import FakeImages, make_tools, read_raw
 
-from dcompose import composerun, guard
+from dockscreen import composerun, guard
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -94,11 +94,11 @@ def test_a_bad_id_range_is_a_refusal(monkeypatch, tmp_path, capsys):
     inspect_as(monkeypatch, tmp_path, project_config())
 
     def bad_range():
-        raise ValueError("DCOMPOSE_ID_RANGE='nonsense' is not of the form low-high")
+        raise ValueError("DOCKSCREEN_ID_RANGE='nonsense' is not of the form low-high")
     monkeypatch.setattr(composerun, "default_tools", bad_range)
 
     assert composerun.run(["up"], 0) == 1
-    assert "DCOMPOSE_ID_RANGE" in capsys.readouterr().err
+    assert "DOCKSCREEN_ID_RANGE" in capsys.readouterr().err
 
 
 def test_no_defaults_notice_when_nothing_was_added(monkeypatch, tmp_path, capsys):
@@ -130,7 +130,7 @@ def test_a_root_image_runs_as_nobody_with_the_image_pinned_in_the_generated_file
     assert web["pull_policy"] == "never"
     pulled = [cmd[-2:] for cmd in recorder.children if "pull" in cmd]
     assert pulled == [["pull", "web"]]    # the project's policy (always) was applied first
-    assert "service web: image x:1 would run as root; dcompose runs it as nobody (65534:65534)" in (
+    assert "service web: image x:1 would run as root; dockscreen runs it as nobody (65534:65534)" in (
         capsys.readouterr().err)
 
 

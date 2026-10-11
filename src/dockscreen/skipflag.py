@@ -35,6 +35,6 @@ def strip(argv, value_opts):
 
 
 def banner():
-    print(f"dcompose: warning: {FLAG} given: the security gate is disabled.", file=sys.stderr)
-    print("dcompose: warning: nothing in this command is checked, and no defaults are added.",
+    print(f"dockscreen: warning: {FLAG} given: the security gate is disabled.", file=sys.stderr)
+    print("dockscreen: warning: nothing in this command is checked, and no defaults are added.",
           file=sys.stderr)

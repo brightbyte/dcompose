@@ -1,4 +1,4 @@
-"""dcompose against a fake `docker` script: real subprocesses, real files, no real docker."""
+"""dockscreen against a fake `docker` script: real subprocesses, real files, no real docker."""
 import io
 import json
 import os
@@ -9,7 +9,7 @@ import fakes
 import pytest
 from fakes import PASSWD
 
-from dcompose import cli, composerun, realdocker
+from dockscreen import cli, composerun, realdocker
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -137,7 +137,8 @@ def test_a_root_image_is_run_as_nobody_from_a_pinned_generated_file(project, cap
     assert any(c[0] == "rm" for c in calls(fake_dir))
     web = json.loads((fake_dir / "file-read").read_text())["services"]["web"]
     assert web["user"] == "65534:65534" and web["pull_policy"] == "never"
-    assert "image x:1 would run as root; dcompose runs it as nobody (65534:65534)" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "image x:1 would run as root; dockscreen runs it as nobody (65534:65534)" in err
 
 
 def test_an_image_that_chose_a_low_user_is_refused_and_nothing_starts(project, capsys):
