@@ -11,6 +11,13 @@ def isolated_environ(monkeypatch):
     monkeypatch.setattr(os, "environ", dict(os.environ))
 
 
+@pytest.fixture(autouse=True)
+def local_daemon(monkeypatch):
+    """Whatever daemon the developer's shell points at, tests talk to the default local one."""
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+
+
 @pytest.fixture
 def forwarded(monkeypatch):
     """The argv lists cli.main would have handed to docker compose."""

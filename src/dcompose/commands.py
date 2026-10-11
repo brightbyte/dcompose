@@ -60,6 +60,8 @@ def audit(global_args, args):
         hardened, additions = hardening.apply(config)
         problems = policy.check_config(hardened, composerun.vetting_all(guard.context(project_dir), hardened))
         tools = composerun.default_tools()
+        if guard.is_remote(global_args, os.environ, tools.docker):
+            problems.append(guard.REMOTE_MESSAGE)
     except (guard.GuardError, ValueError) as e:
         config, additions, problems = None, [], [str(e)]
 
@@ -104,6 +106,8 @@ def harden(global_args, args):
         base, _ = hardening.apply(config)
         static = composerun.vetting_all(guard.context(project_dir), base)
         tools = composerun.default_tools()
+        if guard.is_remote(global_args, os.environ, tools.docker):
+            raise guard.GuardError(guard.REMOTE_MESSAGE)
     except (guard.GuardError, ValueError) as e:
         print(f"dcompose: {printable(e)}", file=sys.stderr)
         return 1

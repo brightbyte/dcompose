@@ -183,7 +183,7 @@ def test_only_started_services_are_looked_at_and_the_platform_is_passed():
     images = FakeImages(users={"web:1": "app", "debug:1": ""})
     prepared, _, _ = prepare(config, images, active=("web",))
     assert set(prepared.decisions) == {"web"}
-    assert images.created == [("web:1", ["--pull=never", "--platform", "linux/arm64", "web:1"])]
+    assert images.created == [("web:1", ["--pull=never", "--platform", "linux/arm64", "--", "web:1"])]
 
 
 def test_an_image_that_is_not_there_is_refused():
@@ -361,3 +361,25 @@ def test_autofix_leaves_a_vetted_unset_user_alone_and_fixes_the_rest():
 def test_gate_assessment_is_what_decides():
     # the decision is gate.assess's: nothing here duplicates the rule
     assert composeimages.gate is gate
+
+
+def test_an_image_name_that_looks_like_an_option_is_not_read_as_one():
+    images = FakeImages(users={"-x": "app"})
+    prepare(project(web={"image": "-x"}), images)
+    assert images.created[0][1][-2:] == ["--", "-x"]
+
+
+def test_a_looked_at_image_is_pinned_by_id_so_a_moved_tag_cannot_change_what_runs():
+    config = project(web={}, db={}, other={"user": "7:7"}, built={"build": {"context": "."}})
+    images = FakeImages(users={"web:1": "app", "db:1": "", "other:1": "app", "proj-built": "app"})
+    original = copy.deepcopy(config)
+    config["services"]["built"].pop("image")  # a built service has no image: compose names it itself
+
+    _, final, _ = decided(config, images, active=("web", "db", "built"))
+
+    services = final["services"]
+    assert services["web"]["image"] == FakeImages.image_id("web:1")
+    assert services["db"]["image"] == FakeImages.image_id("db:1")  # the fallback pins it too
+    assert services["other"]["image"] == "other:1"                  # not looked at: the project's name
+    assert "image" not in services["built"] and services["built"]["pull_policy"] == "never"
+    assert original["services"]["web"]["image"] == "web:1"

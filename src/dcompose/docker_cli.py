@@ -62,8 +62,8 @@ def gated(argv, sub, idx, end):
         return passthrough([*lead, *gate.DEFAULTS, *resolved])
 
     docker = Docker()
-    if is_remote(argv[:idx], os.environ, docker):
-        return gate.refuse(["the daemon is not the default local one; ids and paths cannot be checked"])
+    if guard.is_remote(argv[:idx], os.environ, docker):
+        return gate.refuse([guard.REMOTE_MESSAGE])
 
     ctx = gate.Context(docker, imageuser.LocalIds())
     if sub == "run":
@@ -72,20 +72,6 @@ def gated(argv, sub, idx, end):
         return gate.audit(ctx, args)
     problems = gate.check_existing(ctx, args)
     return gate.refuse(problems) if problems else passthrough(argv)
-
-
-def is_remote(global_args, env, docker):
-    """Whether the daemon might not be this host's own, where host ids and paths mean nothing."""
-    if guard.option_values(global_args, "--host", "-H"):
-        return True
-    if guard.option_values(global_args, "--context", "-c"):
-        return True
-    host = env.get("DOCKER_HOST", "")
-    if host and not host.startswith("unix://"):
-        return True
-    if env.get("DOCKER_CONTEXT") not in (None, "", "default"):
-        return True
-    return docker.context() != "default"
 
 
 def passthrough(argv):

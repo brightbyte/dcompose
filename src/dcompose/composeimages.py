@@ -10,9 +10,10 @@ rule as `docker run` is applied to the identity it would run as (gate.assess):
   service as nobody instead, and says which ids the image would have used;
 - a user of its own that exists on this host, without mounts: refused, set `user:` yourself.
 
-In the generated config only, services that were looked at get `pull_policy: never`, so that compose runs
-the image that was checked and does not pull another one in between. It is never written to the files the
-project owns or to `harden` output, which would silently turn off the project's updates.
+In the generated config only, services that were looked at get `pull_policy: never` and, unless they are
+built, `image:` set to the id of the image that was checked, so that compose runs that image and neither
+pulls another one nor follows a tag that something else has moved in between. Neither is written to the files
+the project owns or to `harden` output, which would silently turn off the project's updates.
 
 A service that is not started by this command and sets no user is run as nobody if it does get started:
 a mistake in working out what starts must fail safe.
@@ -41,6 +42,7 @@ class Tools(NamedTuple):
 class Decision(NamedTuple):
     image: str
     assessment: gate.Assessment
+    image_id: str | None = None  # what the image name was when it was looked at
 
 
 class Prepared(NamedTuple):
@@ -187,19 +189,21 @@ def decide(config, to_run, tools):
         service = config["services"][name]
         image = image_name(config, name, service)
         platform = ["--platform", service["platform"]] if service.get("platform") else []
-        _, container = tools.docker.create(["--pull=never", *platform, image])
+        _, container = tools.docker.create(["--pull=never", *platform, "--", image])
+        image_id = None
         if container is None:
             assessment = gate.Assessment("refused", ["the image is not available locally"])
         else:
             try:
                 info = tools.docker.inspect_container(container)
+                image_id = info.get("Image")
                 assessment = gate.assess(tools.gate_ctx, container, info, explicit=False,
                                          mounts=has_host_mounts(service))
             except (DockerError, ValueError, KeyError) as e:
                 assessment = gate.Assessment("refused", [str(e)])
             finally:
                 tools.docker.remove(container)
-        decisions[name] = Decision(image, assessment)
+        decisions[name] = Decision(image, assessment, image_id)
     return decisions
 
 
@@ -221,6 +225,8 @@ def finalize(config, prepared):
             vetted.add(name)
         if decision and kind in ("ok", "fallback"):
             service["pull_policy"] = "never"  # the image that was checked is the one that runs
+            if decision.image_id and "build" not in service:
+                service["image"] = decision.image_id  # ... even if the name is moved to another image
     return final, frozenset(vetted)
 
 

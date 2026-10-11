@@ -31,6 +31,8 @@ Before starting anything, dcompose pulls or builds each image as `up` would, and
 
 An accepted image user is passed on as numbers (`user: "uid:gid"`, `docker run --user uid:gid`), never as the image's name for it. The runtime then reads nothing from the image's `/etc/passwd` or `/etc/group`, so a difference between how dcompose and docker parse those files cannot give the container another identity. The price: the image's supplementary groups are not applied.
 
+A service whose image was looked at also gets `pull_policy: never` and, unless it is built from a Dockerfile, `image:` set to the checked image's id, in the generated file only. Something else retagging the image between the check and the run cannot change what starts. `docker compose ps` therefore shows the id instead of the name.
+
 Compose interpolates the files it reads, so the generated file is written as `docker compose config` printed it (a literal `$` is `$$`, which reads back as a literal `$`). Before anything is pulled or built, dcompose asks compose for the config of that file and refuses unless it equals the config that was checked.
 
 To run as the image's user with mounts, set `user: "${DCOMPOSE_UID}:${DCOMPOSE_GID}"` and set `DCOMPOSE_UID` and `DCOMPOSE_GID` to the image's ids.
@@ -73,7 +75,7 @@ Put `bin/docker` (or the installed `ddocker`) ahead of the real docker on your `
   - an accepted image user is passed to docker as `--user uid:gid` (the container is created a second time with it).
 - `start` and `restart` refuse existing containers that would fail that check.
 - `create` gets the hardening defaults.
-- Remote daemons are refused.
+- Remote daemons are refused, here and for `dcompose` itself.
 
 Choosing a user skips the image check. These options go before the image name:
 

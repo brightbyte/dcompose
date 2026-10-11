@@ -44,6 +44,8 @@ def run(argv, idx, tools=None):
         if not hardened.get("name"):
             problems.append("config has no project name")
         tools = tools or default_tools()
+        if guard.is_remote(global_args, os.environ, tools.docker):
+            problems.append(guard.REMOTE_MESSAGE)
     except (guard.GuardError, ValueError) as e:
         problems = [str(e)]
     if not guard.report(problems):

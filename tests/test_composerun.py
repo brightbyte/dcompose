@@ -253,3 +253,25 @@ def test_variables_taken_from_the_shell_are_announced_by_name_and_service_but_no
     assert "service web: environment variables taken from your shell: FROMSHELL" in err
     assert "secret" not in err
     assert last(recorder)[1]["services"]["web"]["environment"] == {"FROMSHELL": "secret", "OWN": "x"}
+
+
+@pytest.mark.parametrize("env", [
+    {"DOCKER_HOST": "tcp://build-box:2375"}, {"DOCKER_HOST": "ssh://me@box"}, {"DOCKER_CONTEXT": "prod"}])
+def test_a_remote_daemon_is_refused_because_paths_and_ids_mean_nothing_there(
+        monkeypatch, tmp_path, capsys, env):
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    inspect_as(monkeypatch, tmp_path, project_config())
+    tools, recorder = make_tools(FakeImages(users={"x:1": "app"}))
+
+    assert up(["up"], 0, tools) == 1
+
+    assert "the daemon is not the default local one" in capsys.readouterr().err
+    assert recorder.children == [] and recorder.captured == []
+
+
+def test_a_context_option_is_refused_too(monkeypatch, tmp_path, capsys):
+    inspect_as(monkeypatch, tmp_path, project_config())
+    tools, recorder = make_tools(FakeImages(users={"x:1": "app"}))
+    assert up(["--context", "prod", "up"], 2, tools) == 1
+    assert recorder.children == []

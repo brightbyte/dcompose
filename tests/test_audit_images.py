@@ -147,3 +147,14 @@ def test_audit_lists_the_variables_taken_from_the_shell(monkeypatch, capsys, tmp
     out = capsys.readouterr().out
     assert "service web: environment variables taken from your shell: FROMSHELL" in out
     assert "secret" not in out
+
+
+def test_a_remote_daemon_is_refused_before_anything_is_pulled(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("DOCKER_HOST", "tcp://build-box:2375")
+    recorder = setup(monkeypatch, tmp_path, project(web={}), FakeImages(users={"web:1": ""}))
+
+    assert commands.audit([], []) == 1
+    assert commands.harden([], []) == 1
+
+    assert "the daemon is not the default local one" in capsys.readouterr().err
+    assert recorder.children == []

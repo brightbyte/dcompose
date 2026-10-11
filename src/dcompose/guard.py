@@ -82,6 +82,23 @@ def load_config(global_args):
         raise GuardError(f"cannot parse docker compose config output: {e}")
 
 
+REMOTE_MESSAGE = "the daemon is not the default local one; ids and paths cannot be checked"
+
+
+def is_remote(global_args, env, docker):
+    """Whether the daemon might not be this host's own, where host ids and paths mean nothing."""
+    if option_values(global_args, "--host", "-H"):
+        return True
+    if option_values(global_args, "--context", "-c"):
+        return True
+    host = env.get("DOCKER_HOST", "")
+    if host and not host.startswith("unix://"):
+        return True
+    if env.get("DOCKER_CONTEXT") not in (None, "", "default"):
+        return True
+    return docker.context() != "default"
+
+
 def project_directory(global_args, env, cwd):
     """Mirror how docker compose picks the project directory."""
     explicit = option_values(global_args, "--project-directory", None)

@@ -48,10 +48,18 @@ class FakeImages:
         self.created = []
         self._containers = {}
 
+    def context(self):
+        return "default"
+
+    @staticmethod
+    def image_id(name):
+        return "sha256:" + name.replace(":", "-")
+
     def inspect_image(self, ref):
+        ref = next((name for name in self.local if self.image_id(name) == ref), ref)  # an id or a name
         if ref not in self.local:
             raise DockerError(f"No such image: {ref}")
-        return {"Config": {"User": self.users.get(ref, "")}}
+        return {"Id": self.image_id(ref), "Config": {"User": self.users.get(ref, "")}}
 
     def create(self, args):
         self.calls.append(("create", args))
@@ -65,7 +73,8 @@ class FakeImages:
 
     def inspect_container(self, ref):
         image = self._containers[ref]
-        return {"Id": ref, "Image": image, "Config": {"Image": image, "User": self.users.get(image, "")}}
+        config = {"Image": image, "User": self.users.get(image, "")}
+        return {"Id": ref, "Image": self.image_id(image), "Config": config}
 
     def read_file(self, container, path):
         return {"/etc/passwd": PASSWD, "/etc/group": GROUP}[path]

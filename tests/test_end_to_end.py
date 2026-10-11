@@ -16,7 +16,7 @@ UID, GID = os.getuid(), os.getgid()
 # Canned answers come from files next to the script; every call is appended to `calls`.
 FAKE_DOCKER = """#!/bin/sh
 DIR=$(dirname "$0")
-printf '%s\\n' "--" "$@" >> "$DIR/calls"
+printf '%s\\n' "@@call" "$@" >> "$DIR/calls"
 FILE=""; PREV=""
 for ARG in "$@"; do [ "$PREV" = "-f" ] && FILE="$ARG"; PREV="$ARG"; done
 case " $* " in
@@ -28,6 +28,7 @@ case " $* " in
   *" build "*) exit 0 ;;
 esac
 case "$1 $2" in
+  "context show") echo default; exit 0 ;;
   "image inspect") [ -e "$DIR/pulled" ] || exit 1; cat "$DIR/image.json"; exit 0 ;;
   "container inspect") cat "$DIR/container.json"; exit 0 ;;
 esac
@@ -94,7 +95,7 @@ def project(tmp_path, monkeypatch):
 def calls(fake_dir):
     groups = []
     for line in (fake_dir / "calls").read_text().splitlines():
-        if line == "--":
+        if line == "@@call":
             groups.append([])
         else:
             groups[-1].append(line)
@@ -132,7 +133,7 @@ def test_a_root_image_is_run_as_nobody_from_a_pinned_generated_file(project, cap
 
     assert [c[-2:] for c in compose_calls(fake_dir)][2:4] == [["config", "--services"], ["pull", "web"]]
     create = next(c for c in calls(fake_dir) if c[0] == "create")
-    assert create == ["create", "--pull=never", "x:1"]  # looked at, never started
+    assert create == ["create", "--pull=never", "--", "x:1"]  # looked at, never started
     assert any(c[0] == "rm" for c in calls(fake_dir))
     web = json.loads((fake_dir / "file-read").read_text())["services"]["web"]
     assert web["user"] == "65534:65534" and web["pull_policy"] == "never"
@@ -158,6 +159,7 @@ def test_a_refused_project_never_starts_compose(project, capsys):
 
     assert cli.main(["up"]) == 1
 
-    assert len(calls(fake_dir)) == 1  # only the config call: nothing was pulled either
+    # only the config call and the look at the daemon's context: nothing was pulled either
+    assert [c[0] for c in calls(fake_dir)] == ["compose", "context"]
     err = capsys.readouterr().err
     assert "privileged is not allowed" in err and "user '0'" in err
