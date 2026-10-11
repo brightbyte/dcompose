@@ -24,7 +24,7 @@ def inspect(global_args, runtime):
     A project directory that is, or contains, a sensitive path ($HOME, /etc, ...) is refused: everything
     in it can be bind-mounted.
     """
-    project_dir = project_directory(global_args, os.getcwd(), runtime)
+    project_dir = project_directory(global_args, runtime.cwd, runtime)
     found = sensitive_inside(project_dir, runtime)
     if found:
         raise ScreenError(f"the project directory {project_dir} contains {found[0]}; "

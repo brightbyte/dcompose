@@ -191,7 +191,7 @@ Every structure has its own key list: service, mount, build, volume, network, se
 - `create` gets the defaults and user resolution. Its container is checked when it is started.
 - `start` and `restart` check existing containers. These can't be rewritten, so a container whose user would be replaced (default or configured user) is refused.
 - `exec` checks only the form of the user (see [Forms](#forms)).
-- `audit IMAGE` predicts the outcome, with and without mounts, without pulling or starting anything.
+- `audit` takes a `run` command line, creates the container as `run` would (pulling if `run` would), reports what `run` would do and removes it. `runpolicy` reads the inspected container back into compose service keys and runs `policy.check_service` on them, with the current directory as the project: what the command line asks for that a project could not is reported, and refused with `--strict-screen`.
 - Every `create` gets `--cap-drop=ALL --security-opt=no-new-privileges:true` placed before the user's arguments, so the command line can override them.
 - Users chosen on the command line: see [Command-line options](#command-line-options).
 - A daemon that is not the local default is refused (`-H`, `--context`, a non-unix `DOCKER_HOST`, a non-default context): host ids and paths mean nothing there.
@@ -216,6 +216,7 @@ Mount dirs and the project directory are checked against sensitive paths (system
 | Option, before the subcommand | Effect |
 |---|---|
 | `--allow-me` | the caller's own ids become allowed ids, for this run |
+| `--strict-screen` | `audit` treats the command line as untrusted too; refused before any other subcommand until it is supported there |
 | `--skip-screening` | no checks, no defaults, and a warning on every use |
 
 Text from the project or the image is escaped (`text.printable`) before it is printed or written into a `harden` patch, so it cannot forge output lines or send terminal control sequences.

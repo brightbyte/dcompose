@@ -12,12 +12,14 @@ checked numbers.
 
 `start` and `restart` apply the same check to existing containers, which cannot
 be rewritten. `create` only gets the hardening defaults; its container is
-checked when it is started. `audit` predicts the outcome for an image.
+checked when it is started. `audit` takes a `docker run` command line, creates its container as
+`run` would and reports what `run` would do, then removes it; it also points out what the command line
+asks for that a project or an image may not (runpolicy).
 """
 
 from typing import Protocol, runtime_checkable
 
-from dockscreen import argscan, hostusers, imageuser, messages, runargs
+from dockscreen import argscan, hostusers, imageuser, messages, policy, runargs, runpolicy
 from dockscreen.dockerclient import DockerError
 from dockscreen.imagedecision import (
     Assessment,
@@ -96,9 +98,25 @@ def create_checked(ctx, parsed, extra):
     A container that would be refused is removed. Any other assessment is returned to the caller,
     which re-creates the container with the user as numbers.
     """
-    code, container = ctx.docker.create([*DEFAULTS, *extra, *parsed.create_args])
+    code, container, info, assessment = create_assessed(ctx, parsed, extra)
     if container is None:
         return code
+    if assessment.refused:
+        ctx.docker.remove(container)
+        return messages.refuse(explain(assessment))
+    return container, info, assessment
+
+
+def create_assessed(ctx, parsed, extra):
+    """Create the container as `docker run` would and assess it: (exit code, container, info, assessment).
+
+    extra: arguments that go before the command line's own. Without a container (docker could not
+    create one; it said why) the others are None. The container is left for the caller to remove.
+    """
+    code, container = ctx.docker.create([*DEFAULTS, *extra, *parsed.create_args])
+    if container is None:
+        return code, None, None, None
+    info = None
     try:
         info = ctx.docker.inspect_container(container)
         problems = verify_split(info, parsed)
@@ -106,27 +124,24 @@ def create_checked(ctx, parsed, extra):
             ctx, container, info, explicit=parsed.user_given or bool(extra), reference=parsed.image)
     except (DockerError, ValueError, KeyError) as e:
         assessment = Assessment(Kind.REFUSED, [str(e)])
-    if assessment.refused:
-        ctx.docker.remove(container)
-        return messages.refuse(explain(assessment))
-    return container, info, assessment
+    return code, container, info, assessment
 
 
-def audit(ctx, args):
-    """`docker audit [--allow-me] [--user UID:GID | --as NAME | --as-me] IMAGE`: what `docker run IMAGE`
-    would do.
+AUDIT_USAGE = "usage: dockscreen [--allow-me] [--strict-screen] audit [docker run options] IMAGE [COMMAND]"
 
-    Exit status 1 means it would be refused.
+
+def audit(ctx, args, strict=False):
+    """`audit` with a `docker run` command line: what `docker run` would do with it, without starting it.
+
+    The container is created as `run` would create it, pulling the image if `run` would, and removed.
+    Exit status 1 means `run` would refuse; with strict (--strict-screen), also that the command line
+    asks for something a project or an image may not.
     """
-    usage = "usage: docker audit [--allow-me] [--user UID:GID | --as NAME | --as-me] IMAGE"
     try:
         parsed = runargs.parse(args, ctx.runtime.me, ctx.runtime.resolve_account)
-        # parse rewrites every way of giving a user to --user=..., and drops --allow-me
-        if parsed.command or any(not t.startswith("--user=") for t in parsed.create_args[:-1]):
-            raise runargs.ParseError("only --allow-me, --user, --as and --as-me can come before the image")
     except runargs.ParseError as e:
         messages.notice(e)
-        messages.notice(usage)
+        messages.notice(AUDIT_USAGE)
         return 2
     except hostusers.UserError as e:
         return messages.refuse([str(e)])
@@ -134,45 +149,44 @@ def audit(ctx, args):
         messages.notice(message)
     ctx = ctx.allowing_me(parsed.allow_me)
 
-    image = parsed.image
-    code, container = ctx.docker.create(["--pull=never", *parsed.create_args])
+    code, container, info, assessment = create_assessed(ctx, parsed, [])
     if container is None:
-        messages.notice(f"image {image} is not available locally; run `docker pull` first "
-                        "(pulling does not run the image), then audit it")
+        messages.notice(f"docker could not create a container for {parsed.image}, so it cannot be audited")
         return code or 1
     try:
-        info = ctx.docker.inspect_container(container)
-        # the container has no mounts yet: what happens with and without them differs, so say both
-        outcomes = [assess(ctx, container, info, explicit=parsed.user_given, mounts=mounts, reference=image)
-                    for mounts in (False, True)]
-    except (DockerError, ValueError, KeyError) as e:
-        outcomes = [Assessment(Kind.REFUSED, [str(e)])] * 2
+        policy_ctx = policy.Context(ctx.runtime.cwd, ctx.ids, ctx.settings.mount_dirs)
+        found = runpolicy.findings(info, parsed.user_given, policy_ctx) if info else []
     finally:
         ctx.docker.remove(container)
 
-    return report_assessment(ctx, image, outcomes)
+    report_assessment(ctx, parsed.image, assessment)
+    report_findings(found, strict)
+    return 1 if assessment.refused or (strict and found) else 0
 
 
-def report_assessment(ctx, image, outcomes):
-    """Print what `docker run` would do without and with bind mounts. Exit status 1 if refused."""
+def report_assessment(ctx, image, assessment):
+    """Print what `docker run` would do about the user."""
     name = printable(image)
-    without = outcomes[0]
-    if without.kind is Kind.EXPLICIT:
+    if assessment.kind is Kind.EXPLICIT:
         print(f"image {name}: the user is set on the command line; the image's own user is not checked")
     else:
-        texts = [describe_outcome(ctx, a) for a in outcomes]
-        if texts[0] == texts[1]:
-            print(f"image {name}: {texts[0]}")
-        else:
-            print(f"image {name}, without bind mounts: {texts[0]}")
-            print(f"image {name}, with bind mounts or devices: {texts[1]}")
-        if without.note:
-            print(f"  note: {printable(without.note)}")
-    if any(a.refused for a in outcomes):
+        print(f"image {name}: {describe_outcome(ctx, assessment)}")
+        if assessment.note:
+            print(f"  note: {printable(assessment.note)}")
+    if assessment.refused:
         print(f"  {CHOOSE_HINT}")
-    else:
-        print("docker run also adds " + " ".join(DEFAULTS) + "; later options override them")
-    return 1 if any(a.refused for a in outcomes) else 0
+        return
+    if assessment.pins_user:
+        print(f"docker run would create it again with --user={pinned_user(ctx, assessment)}, as numbers")
+    print("docker run also adds " + " ".join(DEFAULTS) + "; later options override them")
+
+
+def report_findings(found, strict):
+    """Print what the command line asks for that a project or an image may not."""
+    for finding in found:
+        print(f"command line: {printable(finding)}")
+    if found and not strict:
+        print("  docker run allows these because you gave them; --strict-screen makes them fail the audit")
 
 
 def describe_outcome(ctx, assessment):

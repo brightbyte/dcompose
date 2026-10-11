@@ -48,8 +48,12 @@ def dispatch(argv):
         return passthrough(argv, runtime)
 
     allow_me, argv = flags.strip(argv, DOCKER_OPTS_WITH_VALUE, flags.ALLOW_ME)
+    strict, argv = flags.strip(argv, DOCKER_OPTS_WITH_VALUE, flags.STRICT_SCREEN)
 
     idx = argscan.find_subcommand(argv, DOCKER_OPTS_WITH_VALUE)
+    if strict and (idx is None or argv[idx] != "audit"):
+        # refused, not ignored: a caller who asks for strict screening must not get the lenient kind
+        return messages.refuse([f"{flags.STRICT_SCREEN} is only supported for audit so far"])
     if idx is None:
         if not argv or "--help" in argv or "-h" in argv:
             print_help()
@@ -66,15 +70,15 @@ def dispatch(argv):
         sub, end = argv[idx + 1], idx + 1
     if sub not in GATED:
         return passthrough(argv, runtime)
-    return gated(argv, sub, idx, end, runtime, allow_me)
+    return gated(argv, sub, idx, end, runtime, allow_me, strict)
 
 
-def gated(argv, sub, idx, end, runtime, allow_me=False):
+def gated(argv, sub, idx, end, runtime, allow_me=False, strict=False):
     lead, args = argv[:end + 1], argv[end + 1:]
     if sub == "audit":
         if not args or args[:1] == ["--help"]:
-            messages.notice("usage: docker audit [--user UID:GID | --as NAME | --as-me] IMAGE")
-            messages.notice("Predict what `docker run IMAGE` would do: run, run as nobody, or be refused.")
+            messages.notice(gate.AUDIT_USAGE)
+            messages.notice("Say what `docker run` with these arguments would do, without starting anything.")
             return 2
     elif args[:1] == ["--help"] or (sub in ("run", "create") and not args):
         return passthrough(argv, runtime)
@@ -96,7 +100,7 @@ def gated(argv, sub, idx, end, runtime, allow_me=False):
     if sub == "run":
         return gate.run(ctx, args)
     if sub == "audit":
-        return gate.audit(ctx, args)
+        return gate.audit(ctx, args, strict)
     problems = gate.check_existing(ctx, args)
     return messages.refuse(problems) if problems else passthrough(argv, runtime)
 
@@ -109,8 +113,11 @@ def print_help():
         "run checks the user an image runs as: root becomes the default user (nobody unless configured),",
         "and an account of this host, or with mounts an id outside the nobody range, is refused. start and",
         "restart refuse containers that would fail that check. create and run add --cap-drop=ALL and",
-        "no-new-privileges. audit IMAGE says what run would do.",
+        "no-new-privileges. audit takes the arguments of run and says what run would do, without",
+        "starting anything.",
         f"{flags.ALLOW_ME}, before the subcommand, allows containers to run as you.",
+        f"{flags.STRICT_SCREEN}, before audit, also fails it for what the command line asks for that a",
+        "project or an image may not have.",
         f"{flags.SKIP_SCREENING}, before the subcommand, turns all of this off.",
         "",
         "docker help follows.",

@@ -451,29 +451,33 @@ def audit_with(docker, settings, *args):
     return gate.audit(ctx(docker, settings), list(args))
 
 
-def test_audit_says_what_happens_without_and_with_mounts(capsys):
+def test_audit_without_mounts_creates_the_container_as_run_would_and_never_starts_it(capsys):
     docker = FakeDocker(image_user="app")
-    assert audit(docker, "img") == 1
-    out = capsys.readouterr().out
-    assert out.splitlines() == [
-        ("image img, without bind mounts: runs as uid 100000 (no local user), "
-         "gid 100001 (no local group); accepted"),
-        ("image img, with bind mounts or devices: would be refused (runs as uid 100000 (no local user), "
-         "gid 100001 (no local group)): the image's uid 100000 is not in the nobody range 65530-65534, "
-         "and there are host mounts; the image's gid 100001 is not in the nobody range 65530-65534, "
-         "and there are host mounts"),
-        "  pass --user UID:GID, --as NAME or --as-me to choose a user",
+    assert audit(docker, "img") == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "image img: runs as uid 100000 (no local user), gid 100001 (no local group); accepted",
+        "docker run would create it again with --user=100000:100001, as numbers",
+        "docker run also adds --cap-drop=ALL --security-opt=no-new-privileges:true; "
+        "later options override them",
     ]
     assert docker.names() == ["create", "inspect", "remove"]  # nothing is started
-    assert docker.calls[0][1] == ["--pull=never", "img"]      # and nothing is pulled
+    assert docker.calls[0][1] == [*DEFAULTS, "img"]           # pulled if missing, as run would
 
 
-def test_audit_of_a_root_image_is_the_same_with_and_without_mounts(capsys):
+def test_audit_with_mounts_judges_the_image_user_with_them(capsys):
+    docker = FakeDocker(image_user="app", info_extra=BIND)
+    assert audit(docker, "-v", "/p:/p", "img") == 1
+    out = capsys.readouterr().out
+    assert "the image's uid 100000 is not in the nobody range 65530-65534, and there are host mounts" in out
+    assert "pass --user UID:GID, --as NAME or --as-me to choose a user" in out
+
+
+def test_audit_of_a_root_image_says_it_runs_as_the_default_user(capsys):
     assert audit(FakeDocker(image_user=""), "img") == 0
     out = capsys.readouterr().out.splitlines()
     assert out[0] == ("image img: would run as uid 0 (local user root), gid 0 (local group root); "
                       "docker run would run it as the default user (65534:65534) instead")
-    assert len(out) == 2  # one outcome, then the line about the defaults
+    assert out[1] == "docker run would create it again with --user=65534:65534, as numbers"
 
 
 def test_audit_predicts_a_refusal_and_exits_one(capsys):
@@ -482,7 +486,6 @@ def test_audit_predicts_a_refusal_and_exits_one(capsys):
     assert ("image img: would be refused (runs as uid 1000 (local user daniel), "
             "gid 1000 (local group daniel)): the image's uid 1000 exists on this host "
             "(local user daniel)") in out
-    assert "pass --user UID:GID, --as NAME or --as-me to choose a user" in out
 
 
 def test_audit_takes_allow_me(capsys):
@@ -490,23 +493,62 @@ def test_audit_takes_allow_me(capsys):
     assert audit(FakeDocker(image_user="4242:4343"), "--allow-me", "img") == 0
 
 
-def test_audit_with_a_user_does_not_check_the_image(capsys):
-    docker = FakeDocker(image_user="")
+def test_audit_takes_the_whole_run_command_line(capsys):
+    docker = FakeDocker(image_user="app", command=["ls", "-l"])
+    assert audit(docker, "--rm", "--name", "x", "-e", "A=1", "img", "ls", "-l") == 0
+    assert docker.calls[0][1] == [*DEFAULTS, "--rm", "--name", "x", "-e", "A=1", "img", "ls", "-l"]
+
+
+def test_audit_with_a_user_does_not_check_the_image_but_judges_the_user(capsys):
+    docker = FakeDocker(image_user="", container_user="1000:1000")
     assert audit(docker, "--user", "1000:1000", "img") == 0
-    assert "the user is set on the command line" in capsys.readouterr().out
-    assert docker.calls[0][1] == ["--pull=never", "--user=1000:1000", "img"]
+    out = capsys.readouterr().out
+    assert "the user is set on the command line" in out
+    assert "command line: user '1000:1000': uid 1000 exists on this host (local user daniel)" in out
+    assert "--strict-screen makes them fail the audit" in out
+    assert docker.calls[0][1] == [*DEFAULTS, "--user=1000:1000", "img"]
 
 
-def test_audit_of_an_image_that_is_not_local_says_how_to_proceed(capsys):
-    docker = FakeDocker(image_missing=True)
-    assert audit(docker, "img") == 1
-    assert "not available locally; run `docker pull` first" in capsys.readouterr().err
+def test_audit_points_out_what_a_project_could_not_ask_for(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    host = {"Privileged": True, "CapAdd": ["SYS_ADMIN"], "PidMode": "host",
+            "SecurityOpt": ["no-new-privileges:true", "label=disable"], "CapDrop": ["ALL"],
+            "Binds": [f"{tmp_path}/src:/src", "/etc:/host-etc:ro", "data:/data"]}
+    docker = FakeDocker(image_user="nobody", info_extra={"HostConfig": host})
+
+    assert audit(docker, "img") == 0  # run would still start it: the command line is trusted
+
+    findings = [line for line in capsys.readouterr().out.splitlines() if line.startswith("command line:")]
+    assert findings == [
+        "command line: security_opt 'label=disable' is not allowed; "
+        "if bind mounts fail on SELinux, add the :z or :Z mount option instead",
+        "command line: privileged is not allowed",
+        "command line: cap_add is not allowed",
+        "command line: pid: host shares a namespace outside the project",
+        f"command line: bind mount '/etc' is outside {tmp_path}",
+    ]  # the mount inside the current directory and the named volume are fine
 
 
-@pytest.mark.parametrize("args", [[], ["--rm", "img"], ["img", "ls"], ["--name", "x", "img"]])
-def test_audit_takes_only_a_user_and_an_image(args, capsys):
+def test_strict_screen_fails_the_audit_for_command_line_findings(capsys):
+    docker = FakeDocker(image_user="nobody", info_extra={"HostConfig": {"Privileged": True}})
+    assert gate.audit(ctx(docker), ["img"], strict=True) == 1
+    out = capsys.readouterr().out
+    assert "command line: privileged is not allowed" in out
+    assert "--strict-screen makes them fail" not in out
+
+    assert gate.audit(ctx(FakeDocker(image_user="nobody")), ["img"], strict=True) == 0
+
+
+def test_audit_of_an_image_docker_cannot_create_says_so(capsys):
+    docker = FakeDocker(create_code=125)
+    assert audit(docker, "img") == 125
+    assert "docker could not create a container for img" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("args", [[], ["--rm"], ["--name"]])
+def test_audit_needs_an_image(args, capsys):
     assert audit(FakeDocker(), *args) == 2
-    assert "usage: docker audit" in capsys.readouterr().err
+    assert "usage: dockscreen [--allow-me] [--strict-screen] audit" in capsys.readouterr().err
 
 
 def test_audit_removes_the_container_even_when_inspection_fails():
@@ -519,14 +561,29 @@ def test_audit_removes_the_container_even_when_inspection_fails():
 # --- docker audit routing ---------------------------------------------------
 
 def test_docker_audit_is_routed_to_the_audit(routed, capsys):
-    assert docker_cli.main(["audit", "img"]) == 1  # app would be refused with mounts
+    assert docker_cli.main(["audit", "img"]) == 0
     assert "runs as uid 100000" in capsys.readouterr().out
     assert routed == []
 
 
+def test_strict_screen_is_passed_to_the_audit(routed, monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(docker_cli.gate, "audit", lambda ctx, args, strict: seen.append((args, strict)) or 0)
+    assert docker_cli.main(["--strict-screen", "audit", "img"]) == 0
+    assert seen == [(["img"], True)]
+
+
+@pytest.mark.parametrize("argv", [["--strict-screen", "run", "img"], ["--strict-screen", "compose", "up"],
+                                  ["--strict-screen", "ps"], ["--strict-screen"]])
+def test_strict_screen_is_refused_where_it_is_not_supported(routed, argv, capsys):
+    assert docker_cli.main(argv) == 1
+    assert routed == []
+    assert "--strict-screen is only supported for audit so far" in capsys.readouterr().err
+
+
 def test_docker_audit_without_an_image_prints_usage(routed, capsys):
     assert docker_cli.main(["audit"]) == 2
-    assert "usage: docker audit" in capsys.readouterr().err
+    assert "usage: dockscreen [--allow-me] [--strict-screen] audit" in capsys.readouterr().err
 
 
 def test_docker_audit_needs_a_local_daemon(routed, monkeypatch, capsys):
@@ -573,7 +630,7 @@ def test_audit_takes_as_and_refuses_names_for_user(capsys):
     docker = FakeDocker(image_user="")
     assert audit(docker, "--as", "alice", "img") == 0
     captured = capsys.readouterr()
-    assert docker.calls[0][1] == ["--pull=never", "--user=4242:4343", "img"]
+    assert docker.calls[0][1] == [*DEFAULTS, "--user=4242:4343", "img"]
     assert "Resolving user alice to uid 4242, gid 4343" in captured.err
 
     assert audit(FakeDocker(), "--user", "alice", "img") == 1

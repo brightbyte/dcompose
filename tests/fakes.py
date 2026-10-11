@@ -133,18 +133,24 @@ class FakeDocker:
         self.calls.append(("create", args))
         if "--pull=never" in args and self.image_missing:
             return 1, None
+        self.host_config = {"CapDrop": [], "SecurityOpt": []}  # what the daemon records of the options
         for arg in args:
             if arg.startswith("--user="):
                 self.container_user = arg[len("--user="):]
+            elif arg.startswith("--cap-drop="):
+                self.host_config["CapDrop"].append(arg[len("--cap-drop="):])
+            elif arg.startswith("--security-opt="):
+                self.host_config["SecurityOpt"].append(arg[len("--security-opt="):])
         return (self.create_code, "cid1" if self.create_code == 0 else None)
 
     def inspect_container(self, ref):
         self.calls.append(("inspect", ref))
         if ref == "gone":
             raise DockerError("No such container: gone")
+        host = {**getattr(self, "host_config", {}), **(self.info_extra.get("HostConfig") or {})}
         return {"Id": "id-" + ref, "Image": "sha256:abc", "Config": {
             "Image": self.image, "Cmd": self.command, "User": self.container_user,
-            "OpenStdin": self.open_stdin}, **self.info_extra}
+            "OpenStdin": self.open_stdin}, **self.info_extra, "HostConfig": host}
 
     def inspect_image(self, ref):
         return {"Config": {"User": self.image_user}, "RepoDigests": self.repo_digests}

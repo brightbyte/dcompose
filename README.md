@@ -56,7 +56,7 @@ Compose interpolates the files it reads, so the generated file is written as `do
 | `dockscreen compose audit` | run the checks and report, without starting anything (it pulls and builds) |
 | `dockscreen compose harden` (also `fix`) | print a compose override that fixes what can be fixed; the rest is listed as comments |
 | `dockscreen compose doctor` | show the compose version in use |
-| `dockscreen audit IMAGE` | say what `dockscreen run` would do with a local image (see [Images](#images)) |
+| `dockscreen audit [run options] IMAGE [COMMAND]` | say what `dockscreen run` would do with the same arguments, without starting anything (see [Images](#images)) |
 
 ## Configuration
 
@@ -83,6 +83,7 @@ Before the subcommand, such as `dockscreen --allow-me compose up` or `dockscreen
 | Option | |
 |---|---|
 | `--allow-me` | containers may run as you: in `user:`, and as an image's own user |
+| `--strict-screen` | `audit` only so far: also fail for what the command line asks for that a project or image may not have; refused before any other subcommand |
 | `--skip-screening` | turns off all checks and defaults, and prints a warning each time |
 
 After `run` or `exec` (compose or docker, and `create` and `audit`), before the service, image or container:
@@ -109,7 +110,9 @@ After `run` or `exec` (compose or docker, and `create` and `audit`), before the 
 
 Choosing a user (see [Options](#options)) skips the image check. `--allow-me` also works before the image name.
 
-`dockscreen audit [--allow-me] [--user UID:GID | --as NAME | --as-me] IMAGE` says what `dockscreen run` would do with a local image, without and with mounts, without starting it.
+`dockscreen audit` takes the arguments of `dockscreen run` and says what `run` would do with them, without starting anything. It creates the container as `run` would, pulling the image if `run` would, judges the image's user with the mounts you gave, and removes the container. It exits with 1 if `run` would refuse.
+
+It also points out what the command line asks for that a compose project or an image may not have: `--privileged`, `--cap-add`, devices, host namespaces, `--security-opt` other than no-new-privileges, bind mounts outside the current directory and the configured `mount_dirs`, and a `--user` that the [rules](#users) would refuse from an image. `run` allows these, because the command line is trusted. `dockscreen --strict-screen audit …` fails the audit for them too: without it, the audit answers "will it run", with it "is it safe".
 
 Images that start as root and drop privileges themselves, such as postgres or redis, usually need `--user`, `user:` or an `image_users` entry.
 

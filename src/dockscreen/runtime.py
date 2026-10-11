@@ -20,6 +20,7 @@ class Runtime(NamedTuple):
     me: tuple                               # the caller's real (uid, gid)
     env: MutableMapping                     # the environment, which compose and docker inherit
     home: str                               # the caller's home directory
+    cwd: str                                # the directory dockscreen was started in
 
     def rules(self, allow_me=False):
         """The id rules; allow_me: --allow-me was given, so the caller's own ids are allowed."""
@@ -43,4 +44,5 @@ def load_runtime():
         me=me,
         env=env,
         home=home,
+        cwd=os.getcwd(),
     )
