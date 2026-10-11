@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-from dcompose import composeimages, gate, guard, hardening, ids, imageuser, policy, realdocker
+from dcompose import composeimages, gate, guard, hardening, imageuser, policy, realdocker
 from dcompose.dockerclient import Docker
 from dcompose.text import printable
 
@@ -55,7 +55,7 @@ def run(argv, idx, tools=None):
         final, vetted = composeimages.finalize(hardened, prepared)
         if not guard.report(policy.check_config(final, ctx._replace(vetted=vetted))):  # what will run
             return 1
-        for notice in composeimages.notices(prepared):
+        for notice in composeimages.notices(prepared, tools.gate_ctx.local):
             print(f"dcompose: {printable(notice)}", file=sys.stderr)
         return tools.run_child([*command(final), *argv[idx:]])
 
@@ -87,7 +87,7 @@ def generated(global_args, project_dir):
 
 def default_tools():
     docker = Docker()
-    gate_ctx = gate.Context(docker, ids.id_range(os.environ), imageuser.LocalIds())
+    gate_ctx = gate.Context(docker, imageuser.LocalIds())
     return composeimages.Tools(
         docker, gate_ctx, lambda cmd: subprocess.run(cmd, capture_output=True, text=True, check=False),
         run_child)

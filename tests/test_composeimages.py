@@ -2,7 +2,7 @@ import copy
 import os
 
 import pytest
-from fakes import FakeImages, make_tools
+from fakes import FakeImages, Local, make_tools
 
 from dcompose import autofix, composeimages, gate, policy
 from dcompose.dockerclient import DockerError
@@ -224,8 +224,79 @@ def test_descriptions_and_notices():
         "service web: no user set; image web:1 would run as root; dcompose runs it as nobody (65534:65534)",
     ]
     assert composeimages.notices(prepared) == [
-        ("service web: image web:1 would run as root; running it as nobody (65534:65534) instead. "
-         "Set user: to choose another.")]
+        "service web: image web:1 would run as root; dcompose runs it as nobody (65534:65534)"]
+
+
+def test_the_audit_says_which_local_accounts_an_images_ids_are():
+    config = project(web={})
+    prepared, _, _ = prepare(config, FakeImages(users={"web:1": "app"}))
+    line = composeimages.describe(config, prepared, Local())[0]
+    assert line == ("service web: no user set; image web:1 runs as uid 100000 (no local user), "
+                    "gid 100001 (no local group); accepted")
+    # a refusal names the local account that the image's id would be
+    refused, _, _ = prepare(config, FakeImages(users={"web:1": "web"}))
+    assert refused.problems == [
+        ("service web: image web:1: the image would run with uid 1000, which exists on this host "
+         "(local user daniel); the image would run with gid 1000, which exists on this host "
+         "(local group daniel); set user: to choose one")]
+
+
+# --- services with mounts: the user must be chosen explicitly ------------------------
+
+BIND = {"volumes": [{"type": "bind", "source": "/p/data", "target": "/data"}]}
+
+
+@pytest.mark.parametrize("fields, mounts", [
+    ({}, False),
+    (BIND, True),
+    ({"volumes": [{"type": "volume", "source": "d", "target": "/d"}, {"type": "tmpfs", "target": "/t"}]},
+     False),
+    ({"secrets": [{"source": "s"}]}, True),
+    ({"configs": [{"source": "c"}]}, True),
+    ({"volumes_from": ["other"]}, True),
+    ({"devices": ["/dev/dri:/dev/dri"]}, True),
+    ({"volumes": ["/short/syntax:/not-normalized"]}, False),  # config output is always the long form
+])
+def test_which_services_reach_host_files(fields, mounts):
+    assert composeimages.has_host_mounts(fields) is mounts
+
+
+def test_a_service_with_mounts_runs_as_nobody_and_the_images_ids_are_echoed_in_compose_terms():
+    config = project(web=BIND)
+    prepared, _, _ = prepare(config, FakeImages(users={"web:1": "app"}))
+
+    decision = prepared.decisions["web"]
+    assert decision.assessment.kind == "fallback" and decision.assessment.reason == "mounts"
+    assert prepared.problems == []
+    assert composeimages.describe(config, prepared) == [
+        ("service web: no user set; image web:1 would run as uid 100000, gid 100001, and the service has "
+         "bind mounts; dcompose runs it as nobody (65534:65534). To run it as the image's user, set user: "
+         '"${DCOMPOSE_UID}:${DCOMPOSE_GID}" and run with DCOMPOSE_UID=100000 DCOMPOSE_GID=100001')]
+    notice = composeimages.notices(prepared)[0]
+    assert notice.startswith("service web: image web:1 would run as uid 100000")
+    assert notice.endswith("run with DCOMPOSE_UID=100000 DCOMPOSE_GID=100001")
+
+
+def test_mounts_make_a_host_account_id_a_fallback_not_a_refusal():
+    prepared, _, _ = prepare(project(web=BIND), FakeImages(users={"web:1": "web"}))  # uid 1000 is daniel
+    assert prepared.problems == []
+    assert prepared.decisions["web"].assessment.reason == "mounts"
+
+
+def test_without_mounts_a_low_unknown_id_is_accepted_and_with_mounts_it_is_not():
+    images = FakeImages(users={"web:1": "pg"})
+    plain, _, _ = prepare(project(web={}), images)
+    mounted, _, _ = prepare(project(web=BIND), images)
+    assert plain.decisions["web"].assessment.kind == "ok"
+    assert mounted.decisions["web"].assessment.kind == "fallback"
+
+
+def test_finalize_runs_a_mounting_service_as_nobody_in_the_generated_file():
+    config = project(web=BIND, db={})
+    images = FakeImages(users={"web:1": "app", "db:1": "app"})
+    _, final, vetted = decided(config, images, active=("web", "db"))
+    assert final["services"]["web"]["user"] == NOBODY
+    assert "user" not in final["services"]["db"] and vetted == {"db"}  # no mounts: the image's own user stays
 
 
 def test_the_vetting_belongs_to_dcompose_not_to_the_project():

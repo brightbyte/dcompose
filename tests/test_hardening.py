@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from dcompose import commands, guard, hardening, patch, policy
 
 UID, GID = os.getuid(), os.getgid()
@@ -130,3 +132,67 @@ def test_fix_is_an_alias_of_harden_and_is_listed_once_in_the_help():
 
 def test_patch_header_names_the_command():
     assert "`dcompose harden`" in patch.HEADER
+
+
+# --- the names nobody and root in `user:` ------------------------------------------
+
+@pytest.mark.parametrize("spec, resolved", [
+    ("nobody", "65534:65534"),
+    ("nobody:nogroup", "65534:65534"),
+    ("nobody:nobody", "65534:65534"),
+    ("root", "0:0"),
+    ("root:root", "0:0"),
+    ("1000:nogroup", "1000:65534"),
+    ("nobody:1000", "65534:1000"),
+    ("1000:root", "1000:0"),
+])
+def test_user_names_root_and_nobody_are_resolved_to_ids(spec, resolved):
+    original = config(user=spec)
+
+    hardened, additions = hardening.apply(original)
+
+    assert hardened["services"]["web"]["user"] == resolved
+    assert original["services"]["web"]["user"] == spec  # the input is left alone
+    # the first line: the same service also lacks the other defaults
+    assert hardening.describe(additions)[0] == (
+        f'service web: user {spec!r} is a name; dcompose resolves it to "{resolved}"')
+
+
+@pytest.mark.parametrize("spec", ["1000:1000", "65534:65534", "alice", "www-data:www-data", "1000"])
+def test_other_users_are_left_for_the_policy(spec):
+    hardened, additions = hardening.apply(config(user=spec))
+    assert hardened["services"]["web"]["user"] == spec
+    assert not any(a.key == "user" for a in additions)
+
+
+def test_names_the_image_could_remap_are_still_refused_after_hardening():
+    ctx = policy.Context("/p", UID, GID)
+    for spec in ("alice", "www-data:www-data", "app:app"):
+        hardened, _ = hardening.apply(config(user=spec, cap_drop=["ALL"], security_opt=["no-new-privileges"]))
+        problems = policy.check_config(hardened, ctx)
+        assert any("is not numeric" in p for p in problems), spec
+
+
+def test_nobody_passes_and_root_is_refused_once_resolved():
+    ctx = policy.Context("/p", UID, GID)
+    keep = {"cap_drop": ["ALL"], "security_opt": ["no-new-privileges"]}
+    nobody, _ = hardening.apply(config(user="nobody", **keep))
+    root, _ = hardening.apply(config(user="root", **keep))
+    assert policy.check_config(nobody, ctx) == []
+    assert policy.check_config(root, ctx) == [
+        "service web: user '0' is neither the allowed id nor 65534 (nobody)",
+        "service web: group '0' is neither the allowed id nor 65534 (nobody)",
+    ]
+
+
+def test_the_audit_reports_the_resolution_and_harden_does_not_repeat_it(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(guard, "inspect", lambda global_args: (config(user="nobody"), str(tmp_path)))
+
+    commands.audit([], [])
+    audit_out = capsys.readouterr().out
+    commands.harden([], [])
+    harden_out = capsys.readouterr().out
+
+    assert 'service web: user \'nobody\' is a name; dcompose resolves it to "65534:65534"' in audit_out
+    assert harden_out.splitlines()[-1] == "services: {}"  # automatic, like the other defaults
+    assert "resolves the user names nobody and root to ids" in harden_out

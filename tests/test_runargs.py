@@ -1,6 +1,7 @@
+import fakes
 import pytest
 
-from dcompose import runargs
+from dcompose import hostusers, runargs
 
 ME = (4242, 4343)
 
@@ -71,25 +72,54 @@ def test_incomplete_command_lines_are_errors(args):
         runargs.parse(args, ME)
 
 
-@pytest.mark.parametrize("flags", [
-    ["--user", "me"], ["--user=me"], ["-u", "me"], ["-ume"], ["--current-user"],
-])
-def test_me_and_current_user_become_the_callers_ids(flags):
-    parsed = parse(*flags, "img")
+def test_as_me_means_the_callers_ids_and_resolves_nothing():
+    parsed = runargs.parse(["--as-me", "img"], ME, resolve=lambda v: 1 / 0)
     assert parsed.create_args == ["--user=4242:4343", "img"]
+    assert parsed.user_given and parsed.notices == []
+
+
+def test_current_user_is_no_longer_a_flag_of_ours():
+    parsed = parse("--current-user", "img")
+    assert parsed.create_args == ["--current-user", "img"] and not parsed.user_given  # docker will reject it
+
+
+@pytest.mark.parametrize("flags", [["--as", "alice"], ["--as=alice"]])
+def test_as_resolves_a_local_account_on_the_host(flags):
+    parsed = runargs.parse([*flags, "img"], ME, fakes.host_account)
+    assert parsed.create_args == ["--user=4242:4343", "img"]
+    assert parsed.notices == ["Resolving user alice to uid 4242, gid 4343"]
     assert parsed.user_given
+
+
+def test_as_with_an_unknown_account_or_an_id_is_an_error():
+    with pytest.raises(hostusers.UnknownUser):
+        runargs.parse(["--as", "ghost", "img"], ME, fakes.host_account)
+    with pytest.raises(hostusers.UserError):
+        runargs.parse(["--as", "1000", "img"], ME, fakes.host_account)
+    with pytest.raises(runargs.ParseError):
+        runargs.parse(["--as"], ME, fakes.host_account)
 
 
 @pytest.mark.parametrize("flags, user", [
     (["--user", "1000:1000"], "1000:1000"),
-    (["--user=nobody"], "nobody"),
-    (["-u", "0"], "0"),
+    (["--user=0"], "0"),
+    (["-u", "7"], "7"),
+    (["-u7"], "7"),
     (["-itu", "7"], "7"),
 ])
-def test_other_users_are_passed_on_and_recorded(flags, user):
+def test_user_ids_are_passed_on_as_typed_and_recorded(flags, user):
     parsed = parse(*flags, "img")
     assert f"--user={user}" in parsed.create_args
-    assert parsed.user_given
+    assert parsed.user_given and parsed.notices == []
+
+
+@pytest.mark.parametrize("flags", [
+    ["--user", "alice"], ["--user=nobody"], ["-u", "root"], ["-ualice"], ["-itu", "alice"],
+    ["--user", "1000:staff"], ["--user", "me"],
+])
+def test_user_names_are_refused_with_a_pointer_to_as(flags):
+    with pytest.raises(hostusers.UserError, match="--user takes a numeric id"):
+        parse(*flags, "img")
 
 
 def test_a_user_flag_in_a_cluster_keeps_its_neighbours():
@@ -97,9 +127,9 @@ def test_a_user_flag_in_a_cluster_keeps_its_neighbours():
 
 
 def test_user_flags_after_the_image_belong_to_the_command():
-    parsed = parse("img", "id", "-u", "--current-user")
+    parsed = parse("img", "id", "-u", "--as-me", "--as", "alice")
     assert not parsed.user_given
-    assert parsed.create_args == ["img", "id", "-u", "--current-user"]
+    assert parsed.create_args == ["img", "id", "-u", "--as-me", "--as", "alice"]
 
 
 def test_no_user_flag_means_not_given():

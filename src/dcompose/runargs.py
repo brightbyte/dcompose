@@ -9,6 +9,8 @@ daemon's.
 
 from typing import NamedTuple
 
+from dcompose import hostusers
+
 # Long options of `docker run`/`create` that take a value in the next argument.
 LONG_VALUE_FLAGS = frozenset({
     "--add-host", "--annotation", "--attach", "--blkio-weight", "--blkio-weight-device", "--cap-add",
@@ -29,8 +31,9 @@ LONG_VALUE_FLAGS = frozenset({
 SHORT_VALUE_FLAGS = frozenset("acehlmpuvw")
 
 
-CURRENT_USER_FLAG = "--current-user"
-CURRENT_USER_NAME = "me"  # `--user me`: not a docker feature, replaced by the caller's uid:gid
+# Not docker options: replaced by `--user=uid:gid` before docker sees them.
+AS_ME_FLAG = "--as-me"  # the caller's own uid:gid
+AS_FLAG = "--as"        # a local user by name, resolved on this host
 
 
 class ParseError(Exception):
@@ -43,25 +46,41 @@ class ParsedRun(NamedTuple):
     command: list
     detach: bool
     detach_keys: str
-    user_given: bool  # --user, -u or --current-user before the image
+    user_given: bool  # --user, -u, --as or --as-me before the image
+    notices: list     # what resolving user names on this host did, for the caller to print
 
 
 class _State:
-    def __init__(self, current_user):
+    def __init__(self, current_user, resolve):
         self.current_user = f"{current_user[0]}:{current_user[1]}"
+        self.resolve = resolve
+        self.notices = []
         self.kept = []
         self.detach = False
         self.detach_keys = None
         self.user_given = False
 
     def user_value(self, value):
+        """The value of --user or -u: numeric ids only."""
         self.user_given = True
-        return self.current_user if value == CURRENT_USER_NAME else value
+        return hostusers.require_numeric(value)
+
+    def account_value(self, name):
+        """The value of --as: a local account, as ids."""
+        self.user_given = True
+        resolved, messages = self.resolve(name)
+        self.notices += messages
+        return resolved
 
 
-def parse(args, current_user):
-    """Split run arguments; current_user is the (uid, gid) that `me` and --current-user stand for."""
-    state = _State(current_user)
+def parse(args, current_user, resolve=hostusers.resolve_account):
+    """Split run arguments.
+
+    current_user: the (uid, gid) that --as-me stands for.
+    resolve: turns the name given to --as into "uid:gid" (hostusers.resolve_account), with messages.
+    Raises hostusers.UserError if --user is not numeric or --as does not name a local user.
+    """
+    state = _State(current_user, resolve)
     i = 0
     while i < len(args):
         token = args[i]
@@ -78,15 +97,21 @@ def parse(args, current_user):
     if i >= len(args):
         raise ParseError("no image found in the command line")
     return ParsedRun([*state.kept, *args[i:]], args[i], args[i + 1:], state.detach, state.detach_keys,
-                     state.user_given)
+                     state.user_given, state.notices)
 
 
 def parse_long(args, i, state):
     """Handle one --option; returns the index after it and its value."""
     token = args[i]
     name, has_value, value = token.partition("=")
-    if name == CURRENT_USER_FLAG:
-        state.kept.append(f"--user={state.user_value(CURRENT_USER_NAME)}")
+    if name == AS_ME_FLAG:
+        state.user_given = True
+        state.kept.append(f"--user={state.current_user}")
+    elif name == AS_FLAG:
+        if not has_value:
+            i += 1
+            value = value_at(args, i, name)
+        state.kept.append(f"--user={state.account_value(value)}")
     elif name == "--detach":
         state.detach = value.lower() != "false" if has_value else True
     elif name == "--sig-proxy":

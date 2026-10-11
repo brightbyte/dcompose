@@ -5,10 +5,11 @@ import os
 import stat
 import tarfile
 
+import fakes
 import pytest
 from fakes import PASSWD
 
-from dcompose import cli, composerun, ids, realdocker
+from dcompose import cli, composerun, realdocker
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -67,8 +68,8 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(realdocker, "docker_bin", lambda: str(docker))
     # the real tools: real subprocesses against the fake script
     tools = composerun.composeimages.Tools(
-        composerun.Docker(), composerun.gate.Context(composerun.Docker(), ids.DEFAULT_ID_RANGE,
-                                                     composerun.imageuser.LocalIds(), (1000, 1000)),
+        composerun.Docker(), composerun.gate.Context(composerun.Docker(), fakes.Local(),
+                                                     (1000, 1000)),
         lambda cmd: __import__("subprocess").run(cmd, capture_output=True, text=True, check=False),
         composerun.run_child)
     monkeypatch.setattr(composerun, "default_tools", lambda: tools)
@@ -130,7 +131,7 @@ def test_a_root_image_is_run_as_nobody_from_a_pinned_generated_file(project, cap
     assert any(c[0] == "rm" for c in calls(fake_dir))
     web = json.loads((fake_dir / "file-read").read_text())["services"]["web"]
     assert web["user"] == "65534:65534" and web["pull_policy"] == "never"
-    assert "running it as nobody (65534:65534) instead" in capsys.readouterr().err
+    assert "image x:1 would run as root; dcompose runs it as nobody (65534:65534)" in capsys.readouterr().err
 
 
 def test_an_image_that_chose_a_low_user_is_refused_and_nothing_starts(project, capsys):
@@ -141,7 +142,8 @@ def test_an_image_that_chose_a_low_user_is_refused_and_nothing_starts(project, c
     assert cli.main(["up"]) == 1
 
     assert not (fake_dir / "file-read").exists()  # compose never ran on the project
-    assert "service web: image x:1: the image would run with uid 1000" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "service web: image x:1: the image would run with uid 1000, which exists on this host" in err
 
 
 def test_a_refused_project_never_starts_compose(project, capsys):

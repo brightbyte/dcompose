@@ -38,7 +38,8 @@ def test_audit_pulls_and_says_what_happens_to_each_service_without_a_user(monkey
     captured = capsys.readouterr()
     assert "audit passed" in captured.err
     assert captured.out.splitlines() == [
-        "service db: no user set; image db:1 runs as uid 100000, gid 100001; accepted",
+        ("service db: no user set; image db:1 runs as uid 100000 (no local user), "
+         "gid 100001 (no local group); accepted"),
         "service web: no user set; image web:1 would run as root; dcompose runs it as nobody (65534:65534)",
     ]
     assert [cmd[-3:] for cmd in recorder.children] == [["pull", "cache", "web"]]  # db is already local

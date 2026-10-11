@@ -1,10 +1,8 @@
 """Which uid and gids a container would run as, and whether an image may choose them.
 
 The image is hostile, so its own /etc/passwd and /etc/group decide the
-identity docker will use, and the rule is applied to that: not root, not an
-id that exists on this host, and inside the sandbox id range. `nobody` is
-exempt. Ids outside the range or present on the host could own files in
-anything bind-mounted into the container.
+identity docker will use, and the rule is applied to that: not root, and not an
+id that exists on this host. `nobody` is exempt.
 """
 
 import grp
@@ -23,19 +21,19 @@ class Identity(NamedTuple):
 class LocalIds:
     """The ids that exist on this host, through NSS (so LDAP and sssd accounts count)."""
 
-    def uid_exists(self, uid):
+    def user_name(self, uid):
+        """The local account with this uid, or None."""
         try:
-            pwd.getpwuid(uid)
+            return pwd.getpwuid(uid).pw_name
         except KeyError:
-            return False
-        return True
+            return None
 
-    def gid_exists(self, gid):
+    def group_name(self, gid):
+        """The local group with this gid, or None."""
         try:
-            grp.getgrgid(gid)
+            return grp.getgrgid(gid).gr_name
         except KeyError:
-            return False
-        return True
+            return None
 
 
 def parse_passwd(text):
@@ -104,29 +102,43 @@ def involves_root(identity):
     return 0 in (identity.uid, identity.gid, *identity.supplementary)
 
 
-def describe(identity):
-    text = f"uid {identity.uid}, gid {identity.gid}"
+def describe(identity, local=None):
+    """The identity in words; with local (LocalIds), also which local accounts the ids are."""
+    def who(kind, value):
+        if local is None:
+            return str(value)
+        name = local.user_name(value) if kind == "user" else local.group_name(value)
+        return f"{value} (local {kind} {name})" if name else f"{value} (no local {kind})"
+
+    text = f"uid {who('user', identity.uid)}, gid {who('group', identity.gid)}"
     if identity.supplementary:
-        text += ", supplementary gids " + ", ".join(map(str, identity.supplementary))
+        text += ", supplementary gids " + ", ".join(who("group", g) for g in identity.supplementary)
     return text
 
 
-def check(identity, id_range, local):
-    """Problems with letting the image run as this identity; empty if acceptable."""
-    low, high = id_range
+def is_nobody(identity):
+    return {identity.uid, identity.gid, *identity.supplementary} == {NOBODY}
+
+
+def check(identity, local):
+    """Problems with letting the image run as this identity; empty if acceptable.
+
+    Root, and ids that exist on this host: a container shares the kernel's per-user limits (processes,
+    inotify watches) with the host account of the same id, and owns that account's files in anything it
+    mounts. Whether it mounts anything is decided by the caller (gate.assess).
+    """
     problems = []
-    for kind, value, exists in (
-        [("uid", identity.uid, local.uid_exists)]
-        + [("gid", identity.gid, local.gid_exists)]
-        + [("supplementary gid", g, local.gid_exists) for g in identity.supplementary]
+    for kind, value, lookup in (
+        [("uid", identity.uid, local.user_name)]
+        + [("gid", identity.gid, local.group_name)]
+        + [("supplementary gid", g, local.group_name) for g in identity.supplementary]
     ):
         if value == NOBODY:
             continue
         if value == 0:
             problems.append(f"the image would run with {kind} 0 (root)")
-        elif not low <= value <= high:
-            problems.append(
-                f"the image would run with {kind} {value}, outside the allowed range {low}-{high}")
-        elif exists(value):
-            problems.append(f"the image would run with {kind} {value}, which exists on this host")
+        elif (name := lookup(value)) is not None:
+            account = "user" if kind == "uid" else "group"
+            problems.append(f"the image would run with {kind} {value}, which exists on this host "
+                            f"(local {account} {name})")
     return problems

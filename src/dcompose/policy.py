@@ -156,8 +156,8 @@ def parse_id(value):
 def check_id(kind, value, allowed):
     number = parse_id(value)
     if number is None:
-        return [(f"{kind} {value!r} is not numeric "
-                 "(names are resolved by the image, which can map them to root)")]
+        return [(f"{kind} {value!r} is not numeric; use an id (names are resolved by the image, which can "
+                 "map them to root; only nobody and root are resolved by dcompose, in `user:`)")]
     if number not in allowed:
         return [f"{kind} {value!r} is neither the allowed id nor {NOBODY} (nobody)"]
     return []

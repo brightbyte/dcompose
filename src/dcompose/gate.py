@@ -6,10 +6,13 @@ that cannot change between check and start. The one image-derived fact checked
 is the identity the container would run as (see imageuser), unless the command
 line sets a user: the person typing the command is trusted, the image is not.
 
-An image that would run as root is not refused but run as nobody instead, with
-a notice. An image that chose some other user itself, below the allowed range
-or present on this host, is refused: overriding a deliberate choice silently
-would only break it in a more confusing way.
+With no user chosen on the command line: an image that would run as root is run as nobody
+instead, with a notice; so is any image user at all if the container has bind mounts (or
+devices), because a container that reaches host files must have its user chosen by the person
+typing the command. The notice says which ids the image would have used, so that they can be
+passed to --user. Without mounts the image's own non-root user is accepted, unless this host
+has an account with that id (the container would share that account's kernel limits): that is
+refused.
 
 `start` and `restart` apply the same check to existing containers, which cannot
 be rewritten. `create` only gets the hardening defaults; its container is
@@ -20,7 +23,7 @@ import os
 import sys
 from typing import NamedTuple
 
-from dcompose import imageuser, runargs
+from dcompose import hostusers, imageuser, runargs
 from dcompose.dockerclient import DockerError
 from dcompose.text import printable
 
@@ -28,6 +31,7 @@ from dcompose.text import printable
 # (for example `--cap-add NET_BIND_SERVICE`).
 DEFAULTS = ["--cap-drop=ALL", "--security-opt=no-new-privileges:true"]
 FALLBACK_USER = f"{imageuser.NOBODY}:{imageuser.NOBODY}"
+MOUNTS_REASON = "there are bind mounts, so the user must be given explicitly"
 
 VALUE_LONG = frozenset({"--detach-keys", "--checkpoint", "--checkpoint-dir", "--signal", "--time"})
 VALUE_SHORT = frozenset("st")
@@ -35,22 +39,47 @@ VALUE_SHORT = frozenset("st")
 
 class Context(NamedTuple):
     docker: object
-    id_range: tuple
     local: object
-    current_user: tuple | None = None  # (uid, gid) that `me` stands for; the real ones if None
+    current_user: tuple | None = None  # (uid, gid) that --as-me stands for; the real ones if None
+    resolve_user: object = None        # turns the name given to --as into ids (hostusers.resolve_account)
 
     def current_ids(self):
         return self.current_user or (os.getuid(), os.getgid())
+
+    def resolver(self):
+        return self.resolve_user or hostusers.resolve_account
 
 
 class Assessment(NamedTuple):
     kind: str            # explicit, ok, fallback or refused
     problems: list
     identity: imageuser.Identity | None = None
+    reason: str | None = None  # why a fallback: "root" or "mounts"
 
 
-def assess(ctx, container, info, explicit=None):
-    """What the image would be allowed to do. explicit: the user was set on the command line, if known."""
+def has_host_mounts(info):
+    """Whether the container, as inspected, reaches host files or devices.
+
+    Bind mounts, devices and volumes taken from another container all do. Named volumes live in
+    docker's own directory and tmpfs in memory, so the user id means nothing to the host there.
+    """
+    host = info.get("HostConfig") or {}
+    mounts = [*(info.get("Mounts") or []), *(host.get("Mounts") or [])]
+    binds = [b for b in host.get("Binds") or [] if str(b).split(":")[0].startswith("/")]
+    binds_or_devices = any(m.get("Type") == "bind" for m in mounts) or binds
+    return bool(binds_or_devices or host.get("Devices") or host.get("VolumesFrom"))
+
+
+def assess(ctx, container, info, explicit=None, mounts=None):
+    """What the image would be allowed to do.
+
+    explicit: the user was set on the command line, if known.
+    mounts: the container reaches host files or devices; worked out from info if not given.
+
+    With no user chosen, root is run as nobody; so is any image user if there are mounts, because
+    a user that mounts something must be chosen explicitly. Without mounts the image's own
+    non-root user is accepted unless this host has an account with that id.
+    """
     image = ctx.docker.inspect_image(info["Image"])
     spec = info["Config"].get("User") or ""
     if explicit is None:
@@ -64,18 +93,28 @@ def assess(ctx, container, info, explicit=None):
         identity = imageuser.resolve(spec, passwd, groups)
     except ValueError as e:
         return Assessment("refused", [str(e)])
-    problems = imageuser.check(identity, ctx.id_range, ctx.local)
-    if not problems:
-        return Assessment("ok", [], identity)
-    return Assessment("fallback" if imageuser.involves_root(identity) else "refused", problems, identity)
+    if mounts is None:
+        mounts = has_host_mounts(info)
+    problems = imageuser.check(identity, ctx.local)
+    if imageuser.involves_root(identity):
+        return Assessment("fallback", problems, identity, "root")
+    if mounts and not imageuser.is_nobody(identity):
+        return Assessment("fallback", [MOUNTS_REASON], identity, "mounts")
+    if problems:
+        return Assessment("refused", problems, identity)
+    return Assessment("ok", [], identity)
 
 
 def run(ctx, args):
     """`docker run`; returns the exit code."""
     try:
-        parsed = runargs.parse(args, ctx.current_ids())
+        parsed = runargs.parse(args, ctx.current_ids(), ctx.resolver())
     except runargs.ParseError as e:
         return refuse([f"cannot read the command line: {e}; use the real docker for this one"])
+    except hostusers.UserError as e:
+        return refuse([str(e)])
+    for message in parsed.notices:
+        notice(message)
 
     created = create_checked(ctx, parsed, [])
     if isinstance(created, int):
@@ -84,8 +123,7 @@ def run(ctx, args):
 
     if assessment.kind == "fallback":
         ctx.docker.remove(container)
-        notice(f"image {parsed.image} would run as root; running it as nobody ({FALLBACK_USER}) instead. "
-               "Use --user or --current-user to choose another user.")
+        notice(fallback_notice(parsed.image, assessment, ctx.local))
         created = create_checked(ctx, parsed, [f"--user={FALLBACK_USER}"])
         if isinstance(created, int):
             return created
@@ -97,6 +135,28 @@ def run(ctx, args):
         interactive=bool(info["Config"].get("OpenStdin")),
         detach_keys=parsed.detach_keys,
     )
+
+
+def fallback_summary(subject, assessment, local, what="container"):
+    """Why something is run as nobody: it would run as root, or has mounts and no user chosen."""
+    if assessment.reason == "root":
+        return f"{subject} would run as root"
+    who = imageuser.describe(assessment.identity, local)
+    return f"{subject} would run as {who}, and the {what} has bind mounts"
+
+
+def image_user_spec(assessment):
+    """The `uid:gid` the image would have used: what to pass to run it as the image's user."""
+    return f"{assessment.identity.uid}:{assessment.identity.gid}"
+
+
+def fallback_notice(image, assessment, local):
+    summary = fallback_summary(f"image {image}", assessment, local)
+    if assessment.reason == "mounts":
+        advice = f"To run it as the image's user, pass --user {image_user_spec(assessment)}."
+    else:
+        advice = "Use --user ID, --as NAME or --as-me to choose another user."
+    return f"{summary}; running it as nobody ({FALLBACK_USER}) instead. {advice}"
 
 
 def create_checked(ctx, parsed, extra):
@@ -122,19 +182,23 @@ def create_checked(ctx, parsed, extra):
 
 
 def audit(ctx, args):
-    """`docker audit [--user USER | --current-user] IMAGE`: what `docker run IMAGE` would do.
+    """`docker audit [--user ID | --as NAME | --as-me] IMAGE`: what `docker run IMAGE` would do.
 
     Exit status 1 means it would be refused.
     """
     try:
-        parsed = runargs.parse(args, ctx.current_ids())
+        parsed = runargs.parse(args, ctx.current_ids(), ctx.resolver())
         # parse rewrites every way of giving a user to --user=...
         if parsed.command or any(not t.startswith("--user=") for t in parsed.create_args[:-1]):
-            raise runargs.ParseError("only --user and --current-user can come before the image")
+            raise runargs.ParseError("only --user, --as and --as-me can come before the image")
     except runargs.ParseError as e:
-        print(f"dcompose: {printable(e)}\nusage: docker audit [--user USER | --current-user] IMAGE",
+        print(f"dcompose: {printable(e)}\nusage: docker audit [--user ID | --as NAME | --as-me] IMAGE",
               file=sys.stderr)
         return 2
+    except hostusers.UserError as e:
+        return refuse([str(e)])
+    for message in parsed.notices:
+        notice(message)
 
     image = parsed.image
     code, container = ctx.docker.create(["--pull=never", *parsed.create_args])
@@ -144,36 +208,63 @@ def audit(ctx, args):
         return code or 1
     try:
         info = ctx.docker.inspect_container(container)
-        assessment = assess(ctx, container, info, explicit=parsed.user_given)
+        # the container has no mounts yet: what happens with and without them differs, so say both
+        outcomes = [assess(ctx, container, info, explicit=parsed.user_given, mounts=mounts)
+                    for mounts in (False, True)]
     except (DockerError, ValueError, KeyError) as e:
-        assessment = Assessment("refused", [str(e)])
+        outcomes = [Assessment("refused", [str(e)])] * 2
     finally:
         ctx.docker.remove(container)
 
-    return report_assessment(image, parsed, assessment)
+    return report_assessment(image, outcomes, ctx.local)
 
 
-def report_assessment(image, parsed, assessment):
+def report_assessment(image, outcomes, local):
+    """Print what `docker run` would do without and with bind mounts. Exit status 1 if refused."""
     name = printable(image)
-    who = imageuser.describe(assessment.identity) if assessment.identity else None
-    if assessment.kind == "explicit":
+    without = outcomes[0]
+    if without.kind == "explicit":
         print(f"image {name}: the user is set on the command line; the image's own user is not checked")
-    elif assessment.kind == "ok":
-        print(f"image {name}: runs as {who}; accepted")
-    elif assessment.kind == "fallback":
-        print(f"image {name}: would run as {who}; "
-              f"docker run would run it as nobody ({FALLBACK_USER}) instead")
-        for problem in assessment.problems:
-            print(f"  {printable(problem)}")
-        print("  pass --user or --current-user to choose another user")
     else:
-        print(f"image {name}: would be refused" + (f" (runs as {who})" if who else ""))
-        for problem in assessment.problems:
-            print(f"  {printable(problem)}")
-        print("  pass --user or --current-user to choose a user yourself")
-    if assessment.kind != "refused":
+        texts = [describe_outcome(a, local) for a in outcomes]
+        if texts[0] == texts[1]:
+            print(f"image {name}: {texts[0]}")
+        else:
+            print(f"image {name}, without bind mounts: {texts[0]}")
+            print(f"image {name}, with bind mounts or devices: {texts[1]}")
+    if any(a.kind == "refused" for a in outcomes):
+        print("  pass --user ID, --as NAME or --as-me to choose a user yourself")
+    else:
         print("docker run also adds " + " ".join(DEFAULTS) + "; later options override them")
-    return 1 if assessment.kind == "refused" else 0
+    return 1 if any(a.kind == "refused" for a in outcomes) else 0
+
+
+def describe_outcome(assessment, local):
+    who = imageuser.describe(assessment.identity, local) if assessment.identity else None
+    if assessment.kind == "ok":
+        return f"runs as {who}; accepted"
+    if assessment.kind == "fallback":
+        text = f"would run as {who}; docker run would run it as nobody ({FALLBACK_USER}) instead"
+        if assessment.reason == "mounts":
+            text += f"; to run it as the image's user pass --user {image_user_spec(assessment)}"
+        return text
+    reasons = "; ".join(printable(p) for p in assessment.problems)
+    return "would be refused" + (f" (runs as {who})" if who else "") + f": {reasons}"
+
+
+def create_args(args, current_user=None, resolve=None):
+    """The arguments of `docker create` with --as and --as-me replaced by ids, and --user checked.
+
+    Returned as they are if they cannot be read: docker will report what is wrong with them.
+    """
+    try:
+        parsed = runargs.parse(
+            args, current_user or (os.getuid(), os.getgid()), resolve or hostusers.resolve_account)
+    except runargs.ParseError:
+        return args
+    for message in parsed.notices:
+        notice(message)
+    return parsed.create_args
 
 
 def check_existing(ctx, args):
@@ -183,7 +274,11 @@ def check_existing(ctx, args):
         try:
             info = ctx.docker.inspect_container(ref)
             assessment = assess(ctx, info["Id"], info)
-            problems += [f"{ref}: {p}" for p in explain(assessment)]
+            if assessment.kind == "fallback":  # an existing container cannot be rewritten
+                summary = fallback_summary("its image", assessment, ctx.local)
+                problems.append(f"{ref}: {summary}; recreate it with --user ID, --as NAME or --as-me")
+            else:
+                problems += [f"{ref}: {p}" for p in explain(assessment)]
         except (DockerError, ValueError, KeyError) as e:
             problems.append(f"{ref}: {e}")
     return problems
@@ -221,7 +316,7 @@ def explain(assessment):
     """The problems, with how to get past them when they come from the image's own identity."""
     if assessment.identity is None:
         return assessment.problems
-    return [f"{p}; pass --user to choose one" for p in assessment.problems]
+    return [f"{p}; pass --user, --as or --as-me to choose one" for p in assessment.problems]
 
 
 def notice(text):

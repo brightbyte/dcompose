@@ -5,9 +5,10 @@ whatever its image says. The image is acquired first, following the project's ow
 automatic updates keep happening (pull, or build if it is built from a Dockerfile), and then the same
 rule as `docker run` is applied to the identity it would run as (gate.assess):
 
-- acceptable user of its own: left alone;
-- root: the generated config runs the service as nobody instead;
-- anything else it chose itself: refused, set `user:` yourself.
+- no bind mounts and an acceptable user of its own: left alone;
+- root, or any image user at all if the service has bind mounts: the generated config runs the
+  service as nobody instead, and says which ids the image would have used;
+- a user of its own that exists on this host, without mounts: refused, set `user:` yourself.
 
 In the generated config only, services that were looked at get `pull_policy: never`, so that compose runs
 the image that was checked and does not pull another one in between. It is never written to the files the
@@ -45,6 +46,14 @@ class Prepared(NamedTuple):
     to_run: frozenset
     decisions: dict   # service -> Decision, for the started services that set no user
     problems: list
+
+
+def has_host_mounts(service):
+    """Whether the service reaches host files: bind mounts, secrets and configs (bind-mounted files),
+    devices, or the volumes of another container."""
+    binds = any(isinstance(m, dict) and m.get("type") == "bind" for m in service.get("volumes") or [])
+    others = ("volumes_from", "devices", "secrets", "configs")
+    return binds or any(service.get(key) for key in others)
 
 
 def unset_user_services(config):
@@ -147,7 +156,8 @@ def decide(config, to_run, tools):
         else:
             try:
                 info = tools.docker.inspect_container(container)
-                assessment = gate.assess(tools.gate_ctx, container, info, explicit=False)
+                assessment = gate.assess(tools.gate_ctx, container, info, explicit=False,
+                                         mounts=has_host_mounts(service))
             except (DockerError, ValueError, KeyError) as e:
                 assessment = gate.Assessment("refused", [str(e)])
             finally:
@@ -174,8 +184,11 @@ def finalize(config, prepared):
     return final, frozenset(vetted)
 
 
-def describe(config, prepared):
-    """One line per service without a user: what dcompose will do about it."""
+def describe(config, prepared, local=None):
+    """One line per service without a user: what dcompose will do about it.
+
+    local: the host's accounts (imageuser.LocalIds), to say which local user an image's ids would be.
+    """
     lines = []
     for name in sorted(unset_user_services(config)):
         decision = prepared.decisions.get(name)
@@ -183,18 +196,27 @@ def describe(config, prepared):
             lines.append(f"service {name}: no user set and not started by default; "
                          f"dcompose runs it as nobody ({gate.FALLBACK_USER}) if it is started")
         elif decision.assessment.kind == "ok":
-            who = imageuser.describe(decision.assessment.identity)
+            who = imageuser.describe(decision.assessment.identity, local)
             lines.append(f"service {name}: no user set; image {decision.image} runs as {who}; accepted")
         elif decision.assessment.kind == "fallback":
-            lines.append(f"service {name}: no user set; image {decision.image} would run as root; "
-                         f"dcompose runs it as nobody ({gate.FALLBACK_USER})")
+            lines.append(f"service {name}: no user set; {fallback_text(decision, local)}")
     return lines
 
 
-def notices(prepared):
+def fallback_text(decision, local):
+    """Why the service is run as nobody, and how to run it as the image's user instead."""
+    summary = gate.fallback_summary(f"image {decision.image}", decision.assessment, local, "service")
+    text = f"{summary}; dcompose runs it as nobody ({gate.FALLBACK_USER})"
+    if decision.assessment.reason == "mounts":
+        identity = decision.assessment.identity
+        text += (f". To run it as the image's user, set user: \"${{DCOMPOSE_UID}}:${{DCOMPOSE_GID}}\" "
+                 f"and run with DCOMPOSE_UID={identity.uid} DCOMPOSE_GID={identity.gid}")
+    return text
+
+
+def notices(prepared, local=None):
     """What a run is about to do that the project did not ask for."""
     return [
-        f"service {name}: image {d.image} would run as root; running it as nobody ({gate.FALLBACK_USER}) "
-        "instead. Set user: to choose another."
+        f"service {name}: {fallback_text(d, local)}"
         for name, d in prepared.decisions.items() if d.assessment.kind == "fallback"
     ]

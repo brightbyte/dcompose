@@ -130,7 +130,8 @@ def test_a_root_image_runs_as_nobody_with_the_image_pinned_in_the_generated_file
     assert web["pull_policy"] == "never"
     pulled = [cmd[-2:] for cmd in recorder.children if "pull" in cmd]
     assert pulled == [["pull", "web"]]    # the project's policy (always) was applied first
-    assert "would run as root; running it as nobody (65534:65534) instead" in capsys.readouterr().err
+    assert "service web: image x:1 would run as root; dcompose runs it as nobody (65534:65534)" in (
+        capsys.readouterr().err)
 
 
 def test_images_are_acquired_from_a_config_that_still_has_the_projects_pull_policy(monkeypatch, tmp_path):

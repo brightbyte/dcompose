@@ -60,7 +60,7 @@ def audit(global_args, args):
         with composerun.generated(global_args, project_dir) as command:
             prepared = composeimages.prepare(command(hardened), hardened, [], tools)
         problems = prepared.problems
-        lines += composeimages.describe(hardened, prepared)
+        lines += composeimages.describe(hardened, prepared, tools.gate_ctx.local)
 
     passed = guard.report(problems)
     if passed:

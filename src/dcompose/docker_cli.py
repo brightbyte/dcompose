@@ -7,7 +7,7 @@ go through the gate, everything else is exec'd to the real docker unchanged.
 import os
 import sys
 
-from dcompose import cli, gate, guard, ids, imageuser, realdocker, skipflag
+from dcompose import cli, gate, guard, hostusers, imageuser, realdocker, skipflag
 from dcompose.dockerclient import Docker
 
 # Global `docker` options that consume the following token as their value.
@@ -48,24 +48,24 @@ def gated(argv, sub, idx, end):
     lead, args = argv[:end + 1], argv[end + 1:]
     if sub == "audit":
         if not args or args[:1] == ["--help"]:
-            print("usage: docker audit [--user USER | --current-user] IMAGE\n"
+            print("usage: docker audit [--user ID | --as NAME | --as-me] IMAGE\n"
                   "Predict what `docker run IMAGE` would do: run, run as nobody, or be refused.",
                   file=sys.stderr)
             return 2
     elif args[:1] == ["--help"] or (sub in ("run", "create") and not args):
         return passthrough(argv)
     if sub == "create":
-        return passthrough([*lead, *gate.DEFAULTS, *args])
+        try:
+            resolved = gate.create_args(args)
+        except hostusers.UserError as e:
+            return gate.refuse([str(e)])
+        return passthrough([*lead, *gate.DEFAULTS, *resolved])
 
     docker = Docker()
-    try:
-        id_range = ids.id_range(os.environ)
-    except ValueError as e:
-        return gate.refuse([str(e)])
     if is_remote(argv[:idx], os.environ, docker):
         return gate.refuse(["the daemon is not the default local one; ids and paths cannot be checked"])
 
-    ctx = gate.Context(docker, id_range, imageuser.LocalIds())
+    ctx = gate.Context(docker, imageuser.LocalIds())
     if sub == "run":
         return gate.run(ctx, args)
     if sub == "audit":

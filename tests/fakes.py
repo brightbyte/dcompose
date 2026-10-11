@@ -3,24 +3,39 @@ import json
 import os
 import subprocess
 
-from dcompose import composeimages, gate, ids
+from dcompose import composeimages, gate, hostusers
 from dcompose.dockerclient import DockerError
 
-PASSWD = "app:x:100000:100001::/:/bin/sh\nroot:x:0:0::/:/bin/sh\nweb:x:1000:1000::/:/bin/sh\n"
-GROUP = "app:x:100001:\n"
+PASSWD = ("app:x:100000:100001::/:/bin/sh\nroot:x:0:0::/:/bin/sh\nweb:x:1000:1000::/:/bin/sh\n"
+          "pg:x:998:998::/:/bin/sh\nnobody:x:65534:65534::/:/bin/sh\n")
+GROUP = "app:x:100001:\npg:x:998:\n"
 
 
 SUBCOMMANDS = ("pull", "build", "up", "run", "create", "watch", "scale")
 
 
 class Local:
-    """The host has an account with uid and gid 1000."""
+    """The host has root, an account `daniel` with uid and gid 1000, and the group `docker` (999)."""
 
-    def uid_exists(self, uid):
-        return uid == 1000
+    def user_name(self, uid):
+        return {0: "root", 1000: "daniel"}.get(uid)
 
-    def gid_exists(self, gid):
-        return gid == 1000
+    def group_name(self, gid):
+        return {0: "root", 1000: "daniel", 999: "docker"}.get(gid)
+
+
+REAL_RESOLVE = hostusers.resolve_account  # tests that replace it by host_account must not recurse
+
+
+class _Account:
+    def __init__(self, uid, gid):
+        self.pw_uid, self.pw_gid = uid, gid
+
+
+def host_account(name):
+    """hostusers.resolve_account against a host that has alice (4242:4343) and nobody."""
+    users = {"alice": _Account(4242, 4343), "nobody": _Account(65534, 65534)}
+    return REAL_RESOLVE(name, users.__getitem__)
 
 
 class FakeImages:
@@ -90,7 +105,7 @@ def make_tools(images=None, active=("web",), codes=None, on_child=None):
         recorder.captured.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, "\n".join(active) + "\n", "")
 
-    gate_ctx = gate.Context(images, ids.DEFAULT_ID_RANGE, Local(), current_user=(1000, 1000))
+    gate_ctx = gate.Context(images, Local(), current_user=(1000, 1000))
     return composeimages.Tools(images, gate_ctx, capture, run_child), recorder
 
 
