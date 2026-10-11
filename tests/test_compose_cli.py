@@ -117,7 +117,8 @@ def test_unscreened_subcommand_is_not_inspected(forwarded, monkeypatch):
     ([], False),
 ])
 def test_is_screened(argv, screened):
-    assert compose_cli.is_screened(argv, argscan.find_subcommand(argv, compose_cli.GLOBAL_OPTS_WITH_VALUE)) == screened
+    idx = argscan.find_subcommand(argv, compose_cli.GLOBAL_OPTS_WITH_VALUE)
+    assert compose_cli.is_screened(argv, idx) == screened
 
 
 # --- dockscreen's own options and the config file ------------------------------------

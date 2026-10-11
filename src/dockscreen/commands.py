@@ -55,39 +55,34 @@ def audit(global_args, args, allow_me=False):
         messages.notice("usage: dockscreen [compose options] audit")
         return 2
 
-    lines = []
     try:
-        config, project_dir = screen.inspect(global_args)
-        hardened, additions = hardening.apply(config)
-        ctx = composerun.vetting_all(screen.context(project_dir, allow_me), hardened)
-        problems = policy.check_config(hardened, ctx)
-        tools = composerun.default_tools(allow_me)
-        if screen.is_remote(global_args, os.environ, tools.docker):
-            problems.append(screen.REMOTE_MESSAGE)
+        project = composerun.load_project(global_args, allow_me)
+        problems = project.problems()
     except (screen.ScreenError, ValueError) as e:
-        config, additions, problems = None, [], [str(e)]
+        project, problems = None, [str(e)]
 
-    lines += screen.mount_dir_warnings(os.environ)
-    lines += hardening.describe(additions)
-    if config is not None:
+    lines = screen.mount_dir_warnings(os.environ)
+    if project is not None:
+        hardened, tools = project.hardened, project.tools
+        lines += hardening.describe(project.additions)
         lines += shellenv.describe(hardened, os.environ)
-    if config is not None and problems:
-        lines.append("the images were not looked at because of the problems above: "
-                     "nothing was pulled or built")
-    elif config is not None:
-        messages.notice("pulling or building the images as `up` would, to look at the users they run as")
-        with composerun.generated(global_args, project_dir) as command:
-            prepared = composeimages.prepare(command(hardened), hardened, [], tools)
-        problems = prepared.problems
-        lines += composeimages.describe(hardened, prepared, tools.gate_ctx)
+        if problems:
+            lines.append("the images were not looked at because of the problems above: "
+                         "nothing was pulled or built")
+        else:
+            messages.notice("pulling or building the images as `up` would, to look at the users they run as")
+            with project.generated() as command:
+                prepared = composeimages.prepare(command(hardened), hardened, [], tools)
+            problems = prepared.problems
+            lines += composeimages.describe(hardened, prepared, tools.gate_ctx)
 
     passed = messages.report(problems)
     if passed:
         messages.notice("audit passed")
-    if config is not None:
+    if project is not None:
         for line in lines:
             print(printable(line))
-        if problems or additions:
+        if problems or project.additions:
             print(HARDEN_HINT)
     return 0 if passed else 1
 
@@ -107,16 +102,15 @@ def harden(global_args, args, allow_me=False):
     if --allow-me were given, and the patch says that it needs it.
     """
     try:
-        config, project_dir = screen.inspect(global_args)
-        base, _ = hardening.apply(config)
-        static = composerun.vetting_all(screen.context(project_dir, allow_me=True), base)
-        tools = composerun.default_tools(allow_me=True)
-        if screen.is_remote(global_args, os.environ, tools.docker):
-            raise screen.ScreenError(screen.REMOTE_MESSAGE)
+        project = composerun.load_project(global_args, allow_me=True)
     except (screen.ScreenError, ValueError) as e:
         messages.notice(e)
         return 1
+    if project.remote:
+        messages.notice(screen.REMOTE_MESSAGE)
+        return 1
 
+    base, static = project.hardened, project.static_ctx()
     fixed = autofix.fix_config(base, static)
     remaining = policy.check_config(autofix.resolve_user_template(fixed, static), static)
     notes = [hardening.defaults_note()]
@@ -124,7 +118,7 @@ def harden(global_args, args, allow_me=False):
         messages.notice("the images were not looked at because of the problems below: "
                         "nothing was pulled or built")
     else:
-        remaining, notes = fix_image_users(global_args, project_dir, fixed, notes, tools)
+        remaining, notes = fix_image_users(project, fixed, notes)
 
     sys.stdout.write(patch.render(base, fixed, remaining, notes=notes))
     for problem in remaining:
@@ -132,10 +126,10 @@ def harden(global_args, args, allow_me=False):
     return 1 if remaining else 0
 
 
-def fix_image_users(global_args, project_dir, fixed, notes, tools):
+def fix_image_users(project, fixed, notes):
     """Set a user on the services whose image chose one that is not acceptable. (problems left, notes)."""
-    with composerun.generated(global_args, project_dir) as command:
-        prepared = composeimages.prepare(command(fixed), fixed, [], tools)
+    with project.generated() as command:
+        prepared = composeimages.prepare(command(fixed), fixed, [], project.tools)
     if not prepared.decisions:
         return prepared.problems, notes  # nothing could be looked at: pulling or building failed
     for name, decision in prepared.decisions.items():

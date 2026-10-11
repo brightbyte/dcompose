@@ -18,6 +18,7 @@ import os
 import signal
 import subprocess
 import tempfile
+from typing import NamedTuple
 
 from dockscreen import (
     argscan,
@@ -41,6 +42,48 @@ REPLACED_OPTIONS = ("--file", "-f", "--project-directory", "--project-name", "-p
 FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)
 
 
+class Project(NamedTuple):
+    """A compose project as dockscreen runs it: hardened, and what the policy needs to check it."""
+    global_args: list          # the compose options that select it
+    directory: str
+    hardened: dict             # the resolved config with hardening applied
+    additions: list            # what hardening added (hardening.Addition)
+    ctx: policy.Context        # with nothing vetted yet
+    tools: composeimages.Tools
+    remote: bool               # the daemon may not be this host's own
+
+    def static_ctx(self):
+        """ctx for the checks that run before any image is looked at: unset users are decided later."""
+        return self.ctx._replace(vetted=composeimages.unset_user_services(self.hardened))
+
+    def problems(self):
+        """What is refused before any image is looked at."""
+        problems = policy.check_config(self.hardened, self.static_ctx())
+        if not self.hardened.get("name"):
+            problems.append("config has no project name")
+        if self.remote:
+            problems.append(screen.REMOTE_MESSAGE)
+        return problems
+
+    def generated(self):
+        """generated() for this project."""
+        return generated(self.global_args, self.directory)
+
+
+def load_project(global_args, allow_me, tools=None):
+    """The project global_args select, hardened. Raises screen.ScreenError or ValueError if it cannot be
+    inspected.
+
+    allow_me: --allow-me was given, so the caller's own ids are allowed.
+    """
+    config, directory = screen.inspect(global_args)
+    hardened, additions = hardening.apply(config)
+    tools = tools or default_tools(allow_me)
+    remote = screen.is_remote(global_args, os.environ, tools.docker)
+    return Project(global_args, directory, hardened, additions, screen.context(directory, allow_me), tools,
+                   remote)
+
+
 def run(argv, idx, tools=None, allow_me=False):
     """Harden and check the project, then run argv[idx:] (a subcommand that starts containers) on it.
 
@@ -48,40 +91,32 @@ def run(argv, idx, tools=None, allow_me=False):
     decided on (composeimages); the config that runs is the one that was checked, with the result.
     allow_me: --allow-me was given, so the caller's own ids are allowed.
     """
-    global_args, args = argv[:idx], argv[idx + 1:]
     try:
-        parsed = command_line(argv[idx], args)
-        args = parsed.args
-        config, project_dir = screen.inspect(global_args)
-        hardened, additions = hardening.apply(config)
-        ctx = screen.context(project_dir, allow_me)
-        problems = policy.check_config(hardened, vetting_all(ctx, hardened))
-        if not hardened.get("name"):
-            problems.append("config has no project name")
-        tools = tools or default_tools(allow_me)
-        if screen.is_remote(global_args, os.environ, tools.docker):
-            problems.append(screen.REMOTE_MESSAGE)
+        parsed = command_line(argv[idx], argv[idx + 1:])
+        project = load_project(argv[:idx], allow_me, tools)
+        problems = project.problems()
     except (screen.ScreenError, hostusers.UserError, ValueError) as e:
         problems = [str(e)]
     if not messages.report(problems):
         return 1
 
+    hardened, tools = project.hardened, project.tools
     lines = [*parsed.notices, *screen.mount_dir_warnings(os.environ),
              imagedecision.root_default_notice(tools.gate_ctx)]
-    if additions:
-        lines.append(hardening.summary(additions))
+    if project.additions:
+        lines.append(hardening.summary(project.additions))
     lines += shellenv.describe(hardened, os.environ)
-    with generated(global_args, project_dir) as command:
-        prepared = composeimages.prepare(command(hardened), hardened, args, tools, chosen(parsed))
+    with project.generated() as command:
+        prepared = composeimages.prepare(command(hardened), hardened, parsed.args, tools, chosen(parsed))
         if not messages.report(prepared.problems):
             return 1
         final, vetted = composeimages.finalize(hardened, prepared, tools.gate_ctx)
-        if not messages.report(policy.check_config(final, ctx._replace(vetted=vetted))):  # what will run
+        if not messages.report(policy.check_config(final, project.ctx._replace(vetted=vetted))):  # what runs
             return 1
         for line in [*lines, *composeimages.notices(prepared, tools.gate_ctx)]:
             if line:
                 messages.notice(line)
-        return tools.run_child([*command(final), argv[idx], *args])
+        return tools.run_child([*command(final), argv[idx], *parsed.args])
 
 
 def command_line(subcommand, args):
@@ -97,11 +132,6 @@ def command_line(subcommand, args):
 def chosen(parsed):
     """The services whose user the command line chooses: `run -u uid:gid SERVICE` or `run --as NAME`."""
     return frozenset({parsed.service}) if parsed.user_given and parsed.service else frozenset()
-
-
-def vetting_all(ctx, config):
-    """ctx for the checks that run before any image is looked at: unset users are decided later."""
-    return ctx._replace(vetted=composeimages.unset_user_services(config))
 
 
 @contextlib.contextmanager
