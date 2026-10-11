@@ -176,11 +176,11 @@ Every structure has its own key list: service, mount, build, volume, network, se
 | `develop.watch` | no `sync+exec`, which runs a command in the container |
 | `x-` keys | ignored, as compose does, except in `build` |
 
-### Users (`idrules`, `hostusers`, `images`, `imageuser`, `gate.assess`)
+### Users (`idrules`, `hostusers`, `images`, `imageuser`, `imagedecision`)
 
 `idrules.Rules` implements [the id rules](#ids-the-project-and-the-image-may-not-choose). It reads `/etc/subuid` and `/etc/subgid` when it checks, and looks up local accounts through NSS, so LDAP and sssd accounts count.
 
-`gate.assess` implements [steps 2 and 3](#deciding-the-user) for compose and `docker run` alike. `images.configured_user` matches `[image_users]`. Otherwise the image's identity is resolved from its `/etc/passwd` and `/etc/group`, the way moby does it, which are copied out of a container that is created but never started (`docker cp`, capped at 1 MiB). Because the result is pinned as numbers, docker reads neither file at run time, so a difference between this reading and docker's can at worst refuse a good image.
+`imagedecision.assess` implements [steps 2 and 3](#deciding-the-user) for compose and `docker run` alike. `images.configured_user` matches `[image_users]`. Otherwise the image's identity is resolved from its `/etc/passwd` and `/etc/group`, the way moby does it, which are copied out of a container that is created but never started (`docker cp`, capped at 1 MiB). Because the result is pinned as numbers, docker reads neither file at run time, so a difference between this reading and docker's can at worst refuse a good image.
 
 ### The `docker` wrapper (`docker_cli`, `runargs`, `gate`, `hostusers`)
 

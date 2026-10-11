@@ -23,10 +23,10 @@ from dockscreen import (
     argscan,
     composeargs,
     composeimages,
-    gate,
     hardening,
     hostusers,
     idrules,
+    imagedecision,
     imageuser,
     messages,
     policy,
@@ -67,7 +67,7 @@ def run(argv, idx, tools=None, allow_me=False):
         return 1
 
     lines = [*parsed.notices, *screen.mount_dir_warnings(os.environ),
-             gate.root_default_notice(tools.gate_ctx)]
+             imagedecision.root_default_notice(tools.gate_ctx)]
     if additions:
         lines.append(hardening.summary(additions))
     lines += shellenv.describe(hardened, os.environ)
@@ -126,7 +126,7 @@ def generated(global_args, project_dir):
 
 def default_tools(allow_me=False):
     docker = Docker()
-    gate_ctx = gate.Context(docker, idrules.rules(imageuser.LocalIds(), allow_me))
+    gate_ctx = imagedecision.Context(docker, idrules.rules(imageuser.LocalIds(), allow_me))
     return composeimages.Tools(
         docker, gate_ctx, lambda cmd: subprocess.run(cmd, capture_output=True, text=True, check=False),
         run_child)

@@ -3,7 +3,7 @@ import os
 import pytest
 from fakes import GROUP, PASSWD, Local, host_account, rules
 
-from dockscreen import argscan, config, docker_cli, gate, hostusers
+from dockscreen import argscan, config, docker_cli, gate, hostusers, imagedecision
 from dockscreen.dockerclient import DockerError, first_file_of_tar
 
 DEFAULTS = ["--cap-drop=ALL", "--security-opt=no-new-privileges:true"]
@@ -68,7 +68,7 @@ ME = (4242, 4343)
 
 def ctx(docker, settings=None, allow_me=False):
     settings = settings or config.Config()
-    return gate.Context(docker, rules(me=ME, allow_me=allow_me, settings=settings), settings,
+    return imagedecision.Context(docker, rules(me=ME, allow_me=allow_me, settings=settings), settings,
                         resolve_user=host_account)
 
 
@@ -132,7 +132,7 @@ BIND = {"Mounts": [{"Type": "bind", "Source": "/p", "Destination": "/p"}]}
     {"HostConfig": {"VolumesFrom": ["other"]}},
 ])
 def test_has_host_mounts(extra):
-    assert gate.has_host_mounts({"Config": {}, **extra})
+    assert imagedecision.has_host_mounts({"Config": {}, **extra})
 
 
 @pytest.mark.parametrize("extra", [
@@ -141,7 +141,7 @@ def test_has_host_mounts(extra):
     {"HostConfig": {"Binds": ["data:/var/lib/data"], "Devices": [], "VolumesFrom": None}},
 ])
 def test_named_volumes_and_tmpfs_are_not_host_mounts(extra):
-    assert not gate.has_host_mounts({"Config": {}, **extra})
+    assert not imagedecision.has_host_mounts({"Config": {}, **extra})
 
 
 def test_with_a_bind_mount_an_image_user_outside_the_nobody_range_is_refused(capsys):
@@ -267,7 +267,7 @@ def test_an_image_that_would_run_as_root_is_run_as_nobody_instead(image_user, ca
 ])
 def test_a_user_on_the_command_line_prevents_the_fallback(flags, capsys):
     docker = FakeDocker(image_user="")  # root, which would fall back without the flag
-    context = gate.Context(docker, rules(me=ME), config.Config(), current_user=(4242, 4343),
+    context = imagedecision.Context(docker, rules(me=ME), config.Config(), current_user=(4242, 4343),
                            resolve_user=host_account)
 
     assert gate.run(context, [*flags, "img"]) == 42
@@ -278,7 +278,7 @@ def test_a_user_on_the_command_line_prevents_the_fallback(flags, capsys):
 
 def test_as_me_means_the_callers_ids():
     docker = FakeDocker(image_user="")
-    context = gate.Context(docker, rules(me=ME), config.Config(), current_user=(4242, 4343))
+    context = imagedecision.Context(docker, rules(me=ME), config.Config(), current_user=(4242, 4343))
     gate.run(context, ["--as-me", "img"])
     assert docker.calls[0][1] == [*DEFAULTS, "--user=4242:4343", "img"]
 
@@ -648,13 +648,13 @@ def test_a_config_file_that_cannot_be_trusted_stops_the_docker_wrapper_too(route
 
 
 @pytest.mark.parametrize("kind, refused, pins_user, replaces_image_user", [
-    (gate.Kind.EXPLICIT, False, False, False),   # the command line's user runs as given
-    (gate.Kind.CONFIGURED, False, True, True),
-    (gate.Kind.OK, False, True, False),           # the image's own user, pinned as numbers
-    (gate.Kind.FALLBACK, False, True, True),
-    (gate.Kind.REFUSED, True, False, False),
+    (imagedecision.Kind.EXPLICIT, False, False, False),   # the command line's user runs as given
+    (imagedecision.Kind.CONFIGURED, False, True, True),
+    (imagedecision.Kind.OK, False, True, False),           # the image's own user, pinned as numbers
+    (imagedecision.Kind.FALLBACK, False, True, True),
+    (imagedecision.Kind.REFUSED, True, False, False),
 ])
 def test_assessment_predicates(kind, refused, pins_user, replaces_image_user):
-    assessment = gate.Assessment(kind, [])
+    assessment = imagedecision.Assessment(kind, [])
     assert (assessment.refused, assessment.pins_user, assessment.replaces_image_user) == (
         refused, pins_user, replaces_image_user)

@@ -4,10 +4,10 @@ import subprocess
 import pytest
 from fakes import FakeImages, make_tools, rules
 
-from dockscreen import autofix, composeimages, gate, policy
+from dockscreen import autofix, composeimages, imagedecision, policy
 from dockscreen import config as configuration
 from dockscreen.dockerclient import DockerError
-from dockscreen.gate import Kind
+from dockscreen.imagedecision import Kind
 
 NOBODY = "65534:65534"
 COMMAND = ["docker", "compose", "-f", "/gen/compose-0.yaml"]  # what prepare is given; only the tail matters
@@ -28,7 +28,7 @@ def prepare(config, images, args=(), active=("web",), codes=None, settings=None,
 
 def gate_context(images, settings=None):
     settings = settings or configuration.Config()
-    return gate.Context(images, rules(settings=settings), settings)
+    return imagedecision.Context(images, rules(settings=settings), settings)
 
 
 def subcommands(recorder):
@@ -391,8 +391,8 @@ def test_autofix_leaves_a_vetted_unset_user_alone_and_fixes_the_rest():
 
 
 def test_gate_assessment_is_what_decides():
-    # the decision is gate.assess's: nothing here duplicates the rule
-    assert composeimages.gate is gate
+    # the decision is imagedecision.assess's: nothing here duplicates the rule
+    assert composeimages.imagedecision is imagedecision
 
 
 def test_an_image_name_that_looks_like_an_option_is_not_read_as_one():

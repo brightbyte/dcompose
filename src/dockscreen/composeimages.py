@@ -3,7 +3,7 @@
 A project file is hostile, so a service without `user:` cannot just be assumed to run as root or as
 whatever its image says. The image is acquired first, following the project's own pull policy so that
 automatic updates keep happening (pull, or build if it is built from a Dockerfile), and then the same
-rule as `docker run` is applied to the identity it would run as (gate.assess):
+rule as `docker run` is applied to the identity it would run as (imagedecision.assess):
 
 - the config file names a user for the image's repository, and the image was pulled from there:
   that user;
@@ -27,7 +27,7 @@ import json
 from collections.abc import Callable
 from typing import NamedTuple
 
-from dockscreen import argscan, gate, imageuser, policy
+from dockscreen import argscan, imagedecision, imageuser, policy
 from dockscreen.dockerclient import DockerError
 
 
@@ -37,14 +37,14 @@ class ImageError(Exception):
 
 class Tools(NamedTuple):
     docker: object        # dockerclient.Docker
-    gate_ctx: object      # gate.Context
+    gate_ctx: object      # imagedecision.Context
     capture: Callable     # cmd -> CompletedProcess with text stdout
     run_child: Callable   # cmd -> exit code, with the terminal
 
 
 class Decision(NamedTuple):
     image: str
-    assessment: gate.Assessment
+    assessment: imagedecision.Assessment
     image_id: str | None = None  # what the image name was when it was looked at
 
 
@@ -176,16 +176,17 @@ def decide(config, to_run, tools):
         _, container = tools.docker.create(["--pull=never", *platform, "--", image])
         image_id = None
         if container is None:
-            assessment = gate.Assessment(gate.Kind.REFUSED, ["the image is not available locally"])
+            assessment = imagedecision.Assessment(
+                imagedecision.Kind.REFUSED, ["the image is not available locally"])
         else:
             try:
                 info = tools.docker.inspect_container(container)
                 image_id = info.get("Image")
-                assessment = gate.assess(tools.gate_ctx, container, info, explicit=False,
+                assessment = imagedecision.assess(tools.gate_ctx, container, info, explicit=False,
                                          mounts=policy.has_host_mounts(service), reference=image,
                                          built="build" in service)
             except (DockerError, ValueError, KeyError) as e:
-                assessment = gate.Assessment(gate.Kind.REFUSED, [str(e)])
+                assessment = imagedecision.Assessment(imagedecision.Kind.REFUSED, [str(e)])
             finally:
                 tools.docker.remove(container)
         decisions[name] = Decision(image, assessment, image_id)
@@ -195,7 +196,7 @@ def decide(config, to_run, tools):
 def finalize(config, prepared, ctx):
     """(config to run, services whose user dockscreen set from the vetted image). The input is left alone.
 
-    ctx: the gate.Context the decisions were made with, for the default user.
+    ctx: the imagedecision.Context the decisions were made with, for the default user.
     """
     final = copy.deepcopy(config)
     vetted = set()
@@ -204,14 +205,14 @@ def finalize(config, prepared, ctx):
             continue
         decision = prepared.decisions.get(name)
         if decision is None:  # not started by this command
-            service["user"] = gate.default_user_spec(ctx)  # an allowed id: the policy accepts it
+            service["user"] = imagedecision.default_user_spec(ctx)  # an allowed id: the policy accepts it
             continue
         if not decision.assessment.pins_user:
             continue
         # pinned as numbers: the runtime reads neither passwd nor group for `uid:gid`, so it cannot
         # resolve the image's user to anything but what was checked
-        service["user"] = gate.pinned_user(ctx, decision.assessment)
-        if decision.assessment.kind is not gate.Kind.FALLBACK:
+        service["user"] = imagedecision.pinned_user(ctx, decision.assessment)
+        if decision.assessment.kind is not imagedecision.Kind.FALLBACK:
             vetted.add(name)  # the default user is an allowed id, and needs no vetting
         service["pull_policy"] = "never"  # the image that was checked is the one that runs
         if decision.image_id and "build" not in service:
@@ -222,23 +223,24 @@ def finalize(config, prepared, ctx):
 def describe(config, prepared, ctx):
     """One line per service without a user: what dockscreen will do about it.
 
-    ctx: the gate.Context the decisions were made with.
+    ctx: the imagedecision.Context the decisions were made with.
     """
     lines = []
     for name in sorted(unset_user_services(config)):
         decision = prepared.decisions.get(name)
         if decision is None:
             lines.append(f"service {name}: no user set and not started by default; dockscreen runs it "
-                         f"as the default user ({gate.default_user_spec(ctx)}) if it is started")
+                         f"as the default user ({imagedecision.default_user_spec(ctx)}) if it is started")
             continue
         assessment = decision.assessment
-        if assessment.kind is gate.Kind.OK:
+        if assessment.kind is imagedecision.Kind.OK:
             who = imageuser.describe(assessment.identity, ctx.local)
             lines.append(f"service {name}: no user set; image {decision.image} runs as {who}; accepted")
-        elif assessment.kind is gate.Kind.CONFIGURED:
-            lines.append(f"service {name}: no user set; image {decision.image} runs as "
-                         f"{gate.pinned_user(ctx, assessment)}, the user the config file sets for it")
-        elif assessment.kind is gate.Kind.FALLBACK:
+        elif assessment.kind is imagedecision.Kind.CONFIGURED:
+            user = imagedecision.pinned_user(ctx, assessment)
+            lines.append(f"service {name}: no user set; image {decision.image} runs as {user}, "
+                         "the user the config file sets for it")
+        elif assessment.kind is imagedecision.Kind.FALLBACK:
             lines.append(f"service {name}: no user set; {fallback_text(ctx, decision)}")
         if assessment.note:
             lines.append(f"service {name}: note: {assessment.note}")
@@ -247,12 +249,12 @@ def describe(config, prepared, ctx):
 
 def fallback_text(ctx, decision):
     return (f"image {decision.image} would run as root; dockscreen runs it as the default user "
-            f"({gate.default_user_spec(ctx)})")
+            f"({imagedecision.default_user_spec(ctx)})")
 
 
 def notices(prepared, ctx):
     """What a run is about to do that the project did not ask for."""
     return [
         f"service {name}: {fallback_text(ctx, d)}"
-        for name, d in prepared.decisions.items() if d.assessment.kind is gate.Kind.FALLBACK
+        for name, d in prepared.decisions.items() if d.assessment.kind is imagedecision.Kind.FALLBACK
     ]

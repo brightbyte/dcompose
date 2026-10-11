@@ -6,29 +6,27 @@ that cannot change between check and start. The one image-derived fact checked
 is the identity the container would run as (see imageuser), unless the command
 line sets a user: the person typing the command is trusted, the image is not.
 
-With no user chosen on the command line, in this order:
-- the config file names a user for the image's repository, and the image was pulled from there:
-  that user, whatever it is (images.configured_user);
-- the image would run as root (uid, gid or a supplementary gid of 0): the configured default user
-  instead, nobody unless configured otherwise, with a notice;
-- otherwise the image's own user, if the id rules accept it (idrules); refused if not.
-
-Whatever is accepted is not left for the runtime to resolve a second time: the container is re-created
-with `--user uid:gid` as the checked numbers, so a difference between our reading of the image's passwd
-and group files and the runtime's can at worst refuse a good image, never run root.
+With no user chosen on the command line, imagedecision decides it. Whatever it accepts is not left
+for the runtime to resolve a second time: the container is re-created with `--user uid:gid` as the
+checked numbers.
 
 `start` and `restart` apply the same check to existing containers, which cannot
 be rewritten. `create` only gets the hardening defaults; its container is
 checked when it is started. `audit` predicts the outcome for an image.
 """
 
-import enum
 import os
-from typing import NamedTuple
 
-from dockscreen import config as configuration
-from dockscreen import argscan, hostusers, ids, images, imageuser, messages, runargs
+from dockscreen import argscan, hostusers, imageuser, messages, runargs
 from dockscreen.dockerclient import DockerError
+from dockscreen.imagedecision import (
+    Assessment,
+    Kind,
+    assess,
+    default_user_spec,
+    pinned_user,
+    root_default_notice,
+)
 from dockscreen.text import printable
 
 # Inserted before the user's own arguments, so the user can override both
@@ -39,125 +37,6 @@ CHOOSE_HINT = "pass --user UID:GID, --as NAME or --as-me to choose a user"
 # Options of `docker start` and `restart` that take a value.
 VALUE_LONG = frozenset({"--detach-keys", "--checkpoint", "--checkpoint-dir", "--signal", "--time"})
 VALUE_SHORT = frozenset("st")
-
-
-class Context(NamedTuple):
-    docker: object
-    ids: object                        # idrules.Rules
-    config: object = None              # config.Config; the process's own if None
-    current_user: tuple | None = None  # (uid, gid) that --as-me stands for; the real ones if None
-    resolve_user: object = None        # turns the name given to --as into ids (hostusers.resolve_account)
-
-    @property
-    def local(self):
-        return self.ids.local
-
-    def current_ids(self):
-        return self.current_user or (os.getuid(), os.getgid())
-
-    def resolver(self):
-        return self.resolve_user or hostusers.resolve_account
-
-    def settings(self):
-        return self.config or configuration.current()
-
-
-class Kind(enum.StrEnum):
-    EXPLICIT = "explicit"      # the command line chose the user: trusted, not checked
-    CONFIGURED = "configured"  # the config file names a user for the image's repository
-    OK = "ok"                  # the image's own user, which the id rules accept
-    FALLBACK = "fallback"      # the image would run as root: the default user instead
-    REFUSED = "refused"
-
-
-class Assessment(NamedTuple):
-    kind: Kind
-    problems: list
-    identity: imageuser.Identity | None = None
-    note: str | None = None  # an image_users entry for the repository that does not apply, and why
-
-    @property
-    def refused(self):
-        return self.kind is Kind.REFUSED
-
-    @property
-    def pins_user(self):
-        """Whether dockscreen decided the user, and runs the image as it, spelled as numbers."""
-        return self.kind in (Kind.CONFIGURED, Kind.OK, Kind.FALLBACK)
-
-    @property
-    def replaces_image_user(self):
-        """Whether the user dockscreen decided differs from the one the image chose."""
-        return self.kind in (Kind.CONFIGURED, Kind.FALLBACK)
-
-
-def has_host_mounts(info):
-    """Whether the container, as inspected, reaches host files or devices.
-
-    Bind mounts, devices and volumes taken from another container all do. Named volumes live in
-    docker's own directory and tmpfs in memory, so the user id means nothing to the host there.
-    """
-    host = info.get("HostConfig") or {}
-    mounts = [*(info.get("Mounts") or []), *(host.get("Mounts") or [])]
-    binds = [b for b in host.get("Binds") or [] if str(b).split(":")[0].startswith("/")]
-    binds_or_devices = any(m.get("Type") == "bind" for m in mounts) or binds
-    return bool(binds_or_devices or host.get("Devices") or host.get("VolumesFrom"))
-
-
-def assess(ctx, container, info, explicit=None, mounts=None, reference=None, built=False):
-    """What the image would be allowed to do.
-
-    explicit: the user was set on the command line, if known.
-    mounts: the container reaches host files or devices; worked out from info if not given.
-    reference: the image name as the command line or the service gave it (the container's if None).
-    built: the image is built from a Dockerfile by the service; the config file never applies then.
-    """
-    image = ctx.docker.inspect_image(info["Image"])
-    spec = info["Config"].get("User") or ""
-    if explicit is None:
-        explicit = spec != (image["Config"].get("User") or "")
-    if explicit:
-        return Assessment(Kind.EXPLICIT, [])  # trusted: the person typing the command chose it
-
-    match = images.configured_user(ctx.settings(), reference or info["Config"].get("Image") or "",
-                                   image.get("RepoDigests"), built)
-    if match.user:
-        return Assessment(Kind.CONFIGURED, [], imageuser.Identity(*match.user, ()))
-
-    passwd = ctx.docker.read_file(container, "/etc/passwd") or ""
-    groups = ctx.docker.read_file(container, "/etc/group") or ""
-    try:
-        identity = imageuser.resolve(spec, passwd, groups)
-    except ValueError as e:
-        return Assessment(Kind.REFUSED, [str(e)], note=match.problem)
-    if imageuser.involves_root(identity):
-        return Assessment(Kind.FALLBACK, [], identity, match.problem)
-    if mounts is None:
-        mounts = has_host_mounts(info)
-    problems = ctx.ids.problems(identity.uid, identity.gid, identity.supplementary, mounts=mounts)
-    if problems:
-        return Assessment(Kind.REFUSED, [f"the image's {p}" for p in problems], identity, match.problem)
-    return Assessment(Kind.OK, [], identity, match.problem)
-
-
-def default_user_spec(ctx):
-    """The `uid:gid` that replaces an image's root user."""
-    return ids.format_user(ctx.settings().default_user)
-
-
-def pinned_user(ctx, assessment):
-    """The `uid:gid` a fallback, configured or accepted image user runs as, spelled as numbers."""
-    if assessment.kind is Kind.FALLBACK:
-        return default_user_spec(ctx)
-    return ids.format_user((assessment.identity.uid, assessment.identity.gid))
-
-
-def root_default_notice(ctx):
-    """A notice for every run when the configured default user is root, or None."""
-    if 0 in ctx.settings().default_user:
-        return (f"the configured default user is {default_user_spec(ctx)}: "
-                "images that would run as root run as root")
-    return None
 
 
 def run(ctx, args):
@@ -171,7 +50,7 @@ def run(ctx, args):
     for message in [*parsed.notices, root_default_notice(ctx)]:
         if message:
             messages.notice(message)
-    ctx = allowing_me(ctx, parsed.allow_me)
+    ctx = ctx.allowing_me(parsed.allow_me)
 
     created = create_checked(ctx, parsed, [])
     if isinstance(created, int):
@@ -195,11 +74,6 @@ def run(ctx, args):
         interactive=bool(info["Config"].get("OpenStdin")),
         detach_keys=parsed.detach_keys,
     )
-
-
-def allowing_me(ctx, allow_me):
-    """ctx with the caller's own ids allowed, for --allow-me and --as-me."""
-    return ctx._replace(ids=ctx.ids._replace(allow_me=True)) if allow_me else ctx
 
 
 def fallback_notice(ctx, image):
@@ -249,7 +123,7 @@ def audit(ctx, args):
         return messages.refuse([str(e)])
     for message in parsed.notices:
         messages.notice(message)
-    ctx = allowing_me(ctx, parsed.allow_me)
+    ctx = ctx.allowing_me(parsed.allow_me)
 
     image = parsed.image
     code, container = ctx.docker.create(["--pull=never", *parsed.create_args])
