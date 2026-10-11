@@ -19,8 +19,8 @@ asks for that a project or an image may not (runpolicy).
 
 from typing import Protocol, runtime_checkable
 
-from dockscreen import argscan, hostusers, imageuser, messages, policy, runargs, runpolicy
-from dockscreen.dockerclient import DockerError
+from dockscreen import argscan, flags, hostusers, imageuser, messages, policy, runargs, runpolicy, verdict
+from dockscreen.dockerclient import DockerError, DockerNotFound
 from dockscreen.imagedecision import (
     Assessment,
     DockerAccess,
@@ -31,6 +31,7 @@ from dockscreen.imagedecision import (
     root_default_notice,
 )
 from dockscreen.text import printable
+from dockscreen.verdict import Verdict
 
 @runtime_checkable
 class RunnableDocker(DockerAccess, Protocol):
@@ -123,20 +124,23 @@ def create_assessed(ctx, parsed, extra):
         assessment = Assessment(Kind.REFUSED, problems) if problems else assess(
             ctx, container, info, explicit=parsed.user_given or bool(extra), reference=parsed.image)
     except (DockerError, ValueError, KeyError) as e:
-        assessment = Assessment(Kind.REFUSED, [str(e)])
+        assessment = Assessment(Kind.FAILED, [str(e)])
     return code, container, info, assessment
 
 
-AUDIT_USAGE = "usage: dockscreen [--allow-me] [--strict-screen] audit [docker run options] IMAGE [COMMAND]"
+AUDIT_USAGE = ("usage: dockscreen [--allow-me] [--strict-screen] audit [--brief] [docker run options] "
+               "IMAGE [COMMAND]")
 
 
 def audit(ctx, args, strict=False):
     """`audit` with a `docker run` command line: what `docker run` would do with it, without starting it.
 
     The container is created as `run` would create it, pulling the image if `run` would, and removed.
-    Exit status 1 means `run` would refuse; with strict (--strict-screen), also that the command line
-    asks for something a project or an image may not.
+    The exit status is the verdict: 1 if `run` would refuse, or with strict (--strict-screen) if the
+    command line asks for something a project or an image may not; 3 if the audit failed to get that far.
+    --brief, before the image, prints only the verdict, in one line.
     """
+    brief, args = flags.strip(args, runargs.VALUE_OPTIONS, flags.BRIEF)
     try:
         parsed = runargs.parse(args, ctx.runtime.me, ctx.runtime.resolve_account)
     except runargs.ParseError as e:
@@ -144,24 +148,40 @@ def audit(ctx, args, strict=False):
         messages.notice(AUDIT_USAGE)
         return 2
     except hostusers.UserError as e:
-        return messages.refuse([str(e)])
-    for message in parsed.notices:
-        messages.notice(message)
+        return verdict.report(Verdict.REFUSED, [str(e)], brief)
+    if not brief:
+        for message in parsed.notices:
+            messages.notice(message)
     ctx = ctx.allowing_me(parsed.allow_me)
 
-    code, container, info, assessment = create_assessed(ctx, parsed, [])
+    try:
+        _, container, info, assessment = create_assessed(ctx, parsed, [])
+    except DockerNotFound as e:
+        return verdict.report(Verdict.FAILED, [str(e)], brief)
     if container is None:
-        messages.notice(f"docker could not create a container for {parsed.image}, so it cannot be audited")
-        return code or 1
+        reason = f"docker could not create a container for {parsed.image}"
+        return verdict.report(Verdict.FAILED, [reason], brief)
     try:
         policy_ctx = policy.Context(ctx.runtime.cwd, ctx.ids, ctx.settings.mount_dirs)
         found = runpolicy.findings(info, parsed.user_given, policy_ctx) if info else []
     finally:
         ctx.docker.remove(container)
 
-    report_assessment(ctx, parsed.image, assessment)
-    report_findings(found, strict)
-    return 1 if assessment.refused or (strict and found) else 0
+    outcome, reasons = audit_verdict(assessment, found, strict)
+    if brief:
+        print(verdict.brief(outcome, reasons))
+    else:
+        report_assessment(ctx, parsed.image, assessment)
+        report_findings(found, strict)
+    return int(outcome)
+
+
+def audit_verdict(assessment, found, strict):
+    """(verdict, reasons) of an audit: the assessment's, then the command line's findings if strict."""
+    reasons = [*(explain(assessment) if assessment.refused else []), *(found if strict else [])]
+    if assessment.failed:
+        return Verdict.FAILED, reasons
+    return (Verdict.REFUSED if reasons else Verdict.PASSED), reasons
 
 
 def report_assessment(ctx, image, assessment):
@@ -174,7 +194,8 @@ def report_assessment(ctx, image, assessment):
         if assessment.note:
             print(f"  note: {printable(assessment.note)}")
     if assessment.refused:
-        print(f"  {CHOOSE_HINT}")
+        if not assessment.failed:
+            print(f"  {CHOOSE_HINT}")
         return
     if assessment.pins_user:
         print(f"docker run would create it again with --user={pinned_user(ctx, assessment)}, as numbers")
@@ -199,6 +220,8 @@ def describe_outcome(ctx, assessment):
         return (f"would run as {who}; docker run would run it as the default user "
                 f"({default_user_spec(ctx)}) instead")
     reasons = "; ".join(printable(p) for p in assessment.problems)
+    if assessment.failed:
+        return f"could not be assessed: {reasons}"
     return "would be refused" + (f" (runs as {who})" if who else "") + f": {reasons}"
 
 

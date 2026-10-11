@@ -159,7 +159,7 @@ For `up`, `create`, `run`, `watch`, `scale` and `alpha`:
 - no `ssh`, no host network, no `privileged`;
 - no `x-` keys in `build`, because `buildx bake` reads `x-bake` and can write to the host.
 
-`audit` runs steps 1–4 and reports. `harden` prints a compose override that fixes what has a mechanical fix (`autofix`) and lists the rest as comments.
+`audit` runs steps 1–4 and reports, ending with a verdict (`verdict`): passed, refused (the policy says no) or failed (the config could not be read, `screen.InspectError`, or an image could not be pulled, built or looked at, `Prepared.failed`). `harden` prints a compose override that fixes what has a mechanical fix (`autofix`) and lists the rest as comments.
 
 ### The policy (`policy.py`)
 
@@ -191,7 +191,7 @@ Every structure has its own key list: service, mount, build, volume, network, se
 - `create` gets the defaults and user resolution. Its container is checked when it is started.
 - `start` and `restart` check existing containers. These can't be rewritten, so a container whose user would be replaced (default or configured user) is refused.
 - `exec` checks only the form of the user (see [Forms](#forms)).
-- `audit` takes a `run` command line, creates the container as `run` would (pulling if `run` would), reports what `run` would do and removes it. `runpolicy` reads the inspected container back into compose service keys and runs `policy.check_service` on them, with the current directory as the project: what the command line asks for that a project could not is reported, and refused with `--strict-screen`.
+- `audit` takes a `run` command line, creates the container as `run` would (pulling if `run` would), reports what `run` would do and removes it. An image that could not be looked at gets `Kind.FAILED`: `run` refuses it like a refusal, the audit reports it as failed. `runpolicy` reads the inspected container back into compose service keys and runs `policy.check_service` on them, with the current directory as the project: what the command line asks for that a project could not is reported, and refused with `--strict-screen`.
 - Every `create` gets `--cap-drop=ALL --security-opt=no-new-privileges:true` placed before the user's arguments, so the command line can override them.
 - Users chosen on the command line: see [Command-line options](#command-line-options).
 - A daemon that is not the local default is refused (`-H`, `--context`, a non-unix `DOCKER_HOST`, a non-default context): host ids and paths mean nothing there.

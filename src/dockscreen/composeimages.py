@@ -52,6 +52,7 @@ class Prepared(NamedTuple):
     to_run: frozenset
     decisions: dict   # service -> Decision, for the started services that set no user
     problems: list
+    failed: bool = False  # some problems are failures to get or look at an image, not refusals
 
 
 def unset_user_services(config):
@@ -75,16 +76,19 @@ def prepare(command, config, args, tools, chosen=frozenset()):
         to_run = services_to_run(command, config, args, tools)
         failures = acquire(command, config, to_run, args, tools)
     except ImageError as e:
-        return Prepared(frozenset(), {}, [str(e)])
+        return Prepared(frozenset(), {}, [str(e)], failed=True)
     if failures:
-        return Prepared(to_run, {}, failures)
+        return Prepared(to_run, {}, failures, failed=True)
 
     decisions = decide(config, to_run - chosen, tools)
-    problems = [
-        f"service {name}: image {d.image}: {'; '.join(d.assessment.problems)}; set user: to choose one"
-        for name, d in decisions.items() if d.assessment.refused
-    ]
-    return Prepared(to_run, decisions, problems)
+    problems = [decision_problem(name, d) for name, d in decisions.items() if d.assessment.refused]
+    return Prepared(to_run, decisions, problems, failed=any(d.assessment.failed for d in decisions.values()))
+
+
+def decision_problem(name, decision):
+    """Why the service must not run, for a decision that refused or failed."""
+    text = f"service {name}: image {decision.image}: {'; '.join(decision.assessment.problems)}"
+    return text if decision.assessment.failed else f"{text}; set user: to choose one"
 
 
 def verify_round_trip(command, config, tools):
@@ -177,7 +181,7 @@ def decide(config, to_run, tools):
         image_id = None
         if container is None:
             assessment = imagedecision.Assessment(
-                imagedecision.Kind.REFUSED, ["the image is not available locally"])
+                imagedecision.Kind.FAILED, ["the image is not available locally"])
         else:
             try:
                 info = tools.gate_ctx.docker.inspect_container(container)
@@ -186,7 +190,7 @@ def decide(config, to_run, tools):
                                          mounts=policy.has_host_mounts(service), reference=image,
                                          built="build" in service)
             except (DockerError, ValueError, KeyError) as e:
-                assessment = imagedecision.Assessment(imagedecision.Kind.REFUSED, [str(e)])
+                assessment = imagedecision.Assessment(imagedecision.Kind.FAILED, [str(e)])
             finally:
                 tools.gate_ctx.docker.remove(container)
         decisions[name] = Decision(image, assessment, image_id)

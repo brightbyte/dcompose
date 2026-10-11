@@ -70,16 +70,50 @@ def test_audit_does_not_pull_or_build_a_project_that_fails_the_static_checks(mon
     assert recorder.children == [] and recorder.captured == []
 
 
-def test_audit_reports_a_failed_pull(monkeypatch, capsys, tmp_path):
+def test_a_failed_pull_fails_the_audit_rather_than_refusing(monkeypatch, capsys, tmp_path):
     config = project(web={})
     setup(monkeypatch, tmp_path, config, FakeImages(users={}, local=set()), codes={"pull": 1})
+    assert commands.audit([], [], runtime()) == 3
+    assert "[dockscreen] audit failed: docker compose pull web failed" in capsys.readouterr().err
+
+
+def test_a_config_compose_cannot_read_fails_the_audit(monkeypatch, capsys):
+    def unreadable(global_args, runtime):
+        raise screen.InspectError("docker compose config failed:\nbad yaml")
+    monkeypatch.setattr(screen, "inspect", unreadable)
+    assert commands.audit([], ["--brief"], runtime()) == 3
+    assert capsys.readouterr().out == "failed: docker compose config failed:\\x0abad yaml\n"
+
+
+def test_a_project_refused_before_inspection_is_refused_not_failed(monkeypatch, capsys):
+    def sensitive(global_args, runtime):
+        raise screen.ScreenError("the project directory /home/me contains /home/me")
+    monkeypatch.setattr(screen, "inspect", sensitive)
     assert commands.audit([], [], runtime()) == 1
-    assert "docker compose pull web failed" in capsys.readouterr().err
+    assert "[dockscreen] refusing: the project directory /home/me" in capsys.readouterr().err
 
 
-def test_audit_takes_no_arguments(capsys):
+def test_brief_prints_only_the_verdict(monkeypatch, capsys, tmp_path):
+    config = project(web={}, db={})
+    setup(monkeypatch, tmp_path, config, FakeImages(users={"web:1": "app", "db:1": "web"}),
+          active=("web", "db"))
+    assert commands.audit([], ["--brief"], runtime()) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ("refused: service db: image db:1: the image's uid 1000 exists on this host "
+                            "(local user daniel); the image's gid 1000 exists on this host "
+                            "(local group daniel); set user: to choose one\n")
+    assert captured.err == ""
+
+
+def test_brief_says_passed(monkeypatch, capsys, tmp_path):
+    setup(monkeypatch, tmp_path, project(web={}), FakeImages(users={"web:1": "app"}))
+    assert commands.audit([], ["--brief"], runtime()) == 0
+    assert capsys.readouterr().out == "passed\n"
+
+
+def test_audit_takes_only_brief(capsys):
     assert commands.audit([], ["--remote"], runtime()) == 2
-    assert "usage: dockscreen [compose options] audit" in capsys.readouterr().err
+    assert "usage: dockscreen compose [compose options] audit [--brief]" in capsys.readouterr().err
 
 
 # --- harden ---------------------------------------------------------------------

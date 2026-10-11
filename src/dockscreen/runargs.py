@@ -29,6 +29,8 @@ LONG_VALUE_FLAGS = frozenset({
     "--volume-driver", "--volumes-from", "--workdir",
 })
 SHORT_VALUE_FLAGS = frozenset("acehlmpuvw")
+# Every option that takes the next argument as its value, ours included, as it is typed.
+VALUE_OPTIONS = LONG_VALUE_FLAGS | {flags.AS} | {f"-{c}" for c in SHORT_VALUE_FLAGS}
 
 
 class ParseError(Exception):

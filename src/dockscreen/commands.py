@@ -14,14 +14,18 @@ from dockscreen import (
     autofix,
     composeimages,
     composerun,
+    flags,
     hardening,
     messages,
     patch,
     policy,
     screen,
     shellenv,
+    verdict,
 )
+from dockscreen.dockerclient import DockerNotFound
 from dockscreen.text import printable
+from dockscreen.verdict import Verdict
 
 COMMANDS = {}
 ALIASES = {}  # alias -> command it stands for
@@ -48,41 +52,47 @@ def doctor(global_args, args, runtime, allow_me=False):
 
 @command("audit")
 def audit(global_args, args, runtime, allow_me=False):
-    """Run the checks that screen `up` without starting anything; pulls and builds images as up would."""
-    if args:
-        messages.notice("usage: dockscreen [compose options] audit")
-        return 2
+    """Run the checks that screen `up` without starting anything; pulls and builds images as up would.
 
+    Exit status 0 if `up` would run, 1 if it would refuse, 3 if the audit failed to get that far
+    (verdict). --brief prints only the verdict, in one line.
+    """
+    brief = args == [flags.BRIEF]
+    if args and not brief:
+        messages.notice(f"usage: dockscreen compose [compose options] audit [{flags.BRIEF}]")
+        return 2
     try:
         project = composerun.load_project(global_args, runtime, allow_me)
-        problems = project.problems()
+    except (screen.InspectError, DockerNotFound) as e:
+        return verdict.report(Verdict.FAILED, [str(e)], brief)
     except (screen.ScreenError, ValueError) as e:
-        project, problems = None, [str(e)]
+        return verdict.report(Verdict.REFUSED, [str(e)], brief)
 
-    lines = screen.mount_dir_warnings(runtime)
-    if project is not None:
-        hardened, tools = project.hardened, project.tools
-        lines += hardening.describe(project.additions)
-        lines += shellenv.describe(hardened, runtime.env)
-        if problems:
-            lines.append("the images were not looked at because of the problems above: "
-                         "nothing was pulled or built")
-        else:
-            messages.notice("pulling or building the images as `up` would, to look at the users they run as")
-            with project.generated() as command:
-                prepared = composeimages.prepare(command(hardened), hardened, [], tools)
-            problems = prepared.problems
-            lines += composeimages.describe(hardened, prepared, tools.gate_ctx)
-
-    passed = messages.report(problems)
-    if passed:
-        messages.notice("audit passed")
-    if project is not None:
+    outcome, problems, lines = audit_images(project, brief)
+    code = verdict.report(outcome, problems, brief)
+    if not brief:
+        lines = [*screen.mount_dir_warnings(runtime), *hardening.describe(project.additions),
+                 *shellenv.describe(project.hardened, runtime.env), *lines]
         for line in lines:
             print(printable(line))
         if problems or project.additions:
             print(HARDEN_HINT)
-    return 0 if passed else 1
+    return code
+
+
+def audit_images(project, brief):
+    """(verdict, problems, report lines) for a project: the static checks, then the images if they pass."""
+    problems = project.problems()
+    if problems:
+        return Verdict.REFUSED, problems, [
+            "the images were not looked at because of the problems above: nothing was pulled or built"]
+    if not brief:
+        messages.notice("pulling or building the images as `up` would, to look at the users they run as")
+    hardened, tools = project.hardened, project.tools
+    with project.generated() as command:
+        prepared = composeimages.prepare(command(hardened), hardened, [], tools)
+    outcome = Verdict.FAILED if prepared.failed else Verdict.REFUSED if prepared.problems else Verdict.PASSED
+    return outcome, prepared.problems, composeimages.describe(hardened, prepared, tools.gate_ctx)
 
 
 @command("harden", "fix")
@@ -130,9 +140,12 @@ def fix_image_users(project, fixed, notes):
         prepared = composeimages.prepare(command(fixed), fixed, [], project.tools)
     if not prepared.decisions:
         return prepared.problems, notes  # nothing could be looked at: pulling or building failed
+    remaining = []
     for name, decision in prepared.decisions.items():
-        if decision.assessment.refused:
+        if decision.assessment.failed:  # setting a user does not fix an image that could not be read
+            remaining.append(composeimages.decision_problem(name, decision))
+        elif decision.assessment.refused:
             fixed["services"][name]["user"] = autofix.USER_TEMPLATE
             notes.append(f"service {name}: image {decision.image} chose a user that is not acceptable, "
                          "so user is set explicitly")
-    return [], notes
+    return remaining, notes

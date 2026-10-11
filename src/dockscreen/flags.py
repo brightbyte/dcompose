@@ -10,6 +10,8 @@ Before the subcommand (strip() takes them out):
   image may not have (see runpolicy) is refused. Only `audit` supports it so far; everything else
   refuses to run with it, rather than ignore it.
 
+After `audit`, for compose and docker alike: --brief prints only the verdict, in one line.
+
 After `run` or `exec` (composeargs and runargs replace them by `--user=uid:gid`):
 - --as NAME: a local user by name, resolved on this host.
 - --as-me: the caller's own ids; with `docker run` it implies --allow-me.
@@ -22,6 +24,7 @@ ALLOW_ME = "--allow-me"
 AS = "--as"
 AS_ME = "--as-me"
 STRICT_SCREEN = "--strict-screen"
+BRIEF = "--brief"
 AS_ME_MESSAGE = ("--as-me goes after run or exec, before the service; for up, give --allow-me before the "
                  "subcommand, and user: \"${UID}:${GID}\" to the services that should run as you")
 

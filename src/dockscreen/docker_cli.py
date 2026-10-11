@@ -114,7 +114,7 @@ def print_help():
         "and an account of this host, or with mounts an id outside the nobody range, is refused. start and",
         "restart refuse containers that would fail that check. create and run add --cap-drop=ALL and",
         "no-new-privileges. audit takes the arguments of run and says what run would do, without",
-        "starting anything.",
+        "starting anything; audit --brief says only passed, refused or failed.",
         f"{flags.ALLOW_ME}, before the subcommand, allows containers to run as you.",
         f"{flags.STRICT_SCREEN}, before audit, also fails it for what the command line asks for that a",
         "project or an image may not have.",

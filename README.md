@@ -53,10 +53,10 @@ Compose interpolates the files it reads, so the generated file is written as `do
 
 | Command | |
 |---|---|
-| `dockscreen compose audit` | run the checks and report, without starting anything (it pulls and builds) |
+| `dockscreen compose audit [--brief]` | run the checks and report, without starting anything (it pulls and builds) |
 | `dockscreen compose harden` (also `fix`) | print a compose override that fixes what can be fixed; the rest is listed as comments |
 | `dockscreen compose doctor` | show the compose version in use |
-| `dockscreen audit [run options] IMAGE [COMMAND]` | say what `dockscreen run` would do with the same arguments, without starting anything (see [Images](#images)) |
+| `dockscreen audit [--brief] [run options] IMAGE [COMMAND]` | say what `dockscreen run` would do with the same arguments, without starting anything (see [Images](#images)) |
 
 ## Configuration
 
@@ -113,6 +113,18 @@ Choosing a user (see [Options](#options)) skips the image check. `--allow-me` al
 `dockscreen audit` takes the arguments of `dockscreen run` and says what `run` would do with them, without starting anything. It creates the container as `run` would, pulling the image if `run` would, judges the image's user with the mounts you gave, and removes the container. It exits with 1 if `run` would refuse.
 
 It also points out what the command line asks for that a compose project or an image may not have: `--privileged`, `--cap-add`, devices, host namespaces, `--security-opt` other than no-new-privileges, bind mounts outside the current directory and the configured `mount_dirs`, and a `--user` that the [rules](#users) would refuse from an image. `run` allows these, because the command line is trusted. `dockscreen --strict-screen audit …` fails the audit for them too: without it, the audit answers "will it run", with it "is it safe".
+
+### Audit results
+
+Both audits, `dockscreen audit` and `dockscreen compose audit`, end with one of three verdicts, which is also the exit status:
+
+| Exit status | Verdict | |
+|---|---|---|
+| 0 | passed | it would run (with `--strict-screen`: and the command line asks for nothing a project could not) |
+| 1 | refused | the policy says no |
+| 3 | failed | the audit could not get far enough to judge: no docker, the image could not be pulled or created, the compose config could not be read, a pull or build failed |
+
+Exit status 2 means the audit was called wrongly. `--brief` prints only the verdict, in one line, such as `passed` or `refused: privileged is not allowed (+2 more)`. Output from docker itself, such as pull progress, still appears.
 
 Images that start as root and drop privileges themselves, such as postgres or redis, usually need `--user`, `user:` or an `image_users` entry.
 

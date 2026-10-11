@@ -4,7 +4,7 @@ import pytest
 from fakes import FakeDocker, host_account, rules, runtime
 
 from dockscreen import argscan, config, docker_cli, gate, hostusers, imagedecision
-from dockscreen.dockerclient import DockerError, first_file_of_tar
+from dockscreen.dockerclient import DockerError, DockerNotFound, first_file_of_tar
 
 DEFAULTS = ["--cap-drop=ALL", "--security-opt=no-new-privileges:true"]
 
@@ -539,10 +539,37 @@ def test_strict_screen_fails_the_audit_for_command_line_findings(capsys):
     assert gate.audit(ctx(FakeDocker(image_user="nobody")), ["img"], strict=True) == 0
 
 
-def test_audit_of_an_image_docker_cannot_create_says_so(capsys):
+def test_audit_of_an_image_docker_cannot_create_fails(capsys):
     docker = FakeDocker(create_code=125)
-    assert audit(docker, "img") == 125
-    assert "docker could not create a container for img" in capsys.readouterr().err
+    assert audit(docker, "img") == 3
+    assert "[dockscreen] audit failed: docker could not create a container for img" in capsys.readouterr().err
+
+
+def test_audit_without_docker_fails(capsys):
+    docker = FakeDocker()
+    docker.create = lambda args: (_ for _ in ()).throw(DockerNotFound("'docker' not found in PATH"))
+    assert audit(docker, "--brief", "img") == 3
+    assert capsys.readouterr().out == "failed: 'docker' not found in PATH\n"
+
+
+@pytest.mark.parametrize("args, out, code", [
+    (["--brief", "img"], "passed\n", 0),
+    (["-v", "/p:/p", "--brief", "img"],
+     "refused: the image's uid 100000 is not in the nobody range 65530-65534, and there are host mounts; "
+     "pass --user UID:GID, --as NAME or --as-me to choose a user (+1 more)\n", 1),
+])
+def test_brief_prints_only_the_verdict(args, out, code, capsys):
+    docker = FakeDocker(image_user="app", info_extra=BIND if "-v" in args else None)
+    assert audit(docker, *args) == code
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == (out, "")
+    assert "--brief" not in docker.calls[0][1]  # ours: docker never sees it
+
+
+def test_brief_with_strict_screen_names_the_command_line_finding(capsys):
+    docker = FakeDocker(image_user="nobody", info_extra={"HostConfig": {"Privileged": True}})
+    assert gate.audit(ctx(docker), ["--brief", "img"], strict=True) == 1
+    assert capsys.readouterr().out == "refused: privileged is not allowed\n"
 
 
 @pytest.mark.parametrize("args", [[], ["--rm"], ["--name"]])
@@ -551,11 +578,19 @@ def test_audit_needs_an_image(args, capsys):
     assert "usage: dockscreen [--allow-me] [--strict-screen] audit" in capsys.readouterr().err
 
 
-def test_audit_removes_the_container_even_when_inspection_fails():
+def test_audit_fails_and_removes_the_container_when_inspection_fails(capsys):
     docker = FakeDocker()
     docker.inspect_container = lambda ref: (_ for _ in ()).throw(DockerError("boom"))
-    assert audit(docker, "img") == 1
+    assert audit(docker, "img") == 3
     assert ("remove", "cid1") in docker.calls
+    assert "image img: could not be assessed: boom" in capsys.readouterr().out
+
+
+def test_run_refuses_what_audit_calls_failed(capsys):
+    docker = FakeDocker()
+    docker.inspect_container = lambda ref: (_ for _ in ()).throw(DockerError("boom"))
+    assert gate.run(ctx(docker), ["img"]) == 1  # not started: a failure to look is not a pass
+    assert "refusing: boom" in capsys.readouterr().err
 
 
 # --- docker audit routing ---------------------------------------------------
@@ -673,6 +708,7 @@ def test_a_config_file_that_cannot_be_trusted_stops_the_docker_wrapper_too(route
     (imagedecision.Kind.OK, False, True, False),           # the image's own user, pinned as numbers
     (imagedecision.Kind.FALLBACK, False, True, True),
     (imagedecision.Kind.REFUSED, True, False, False),
+    (imagedecision.Kind.FAILED, True, False, False),       # must not run either: nothing was checked
 ])
 def test_assessment_predicates(kind, refused, pins_user, replaces_image_user):
     assessment = imagedecision.Assessment(kind, [])

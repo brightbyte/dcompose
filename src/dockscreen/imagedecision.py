@@ -70,6 +70,7 @@ class Kind(enum.StrEnum):
     OK = "ok"                  # the image's own user, which the id rules accept
     FALLBACK = "fallback"      # the image would run as root: the default user instead
     REFUSED = "refused"
+    FAILED = "failed"          # the image could not be looked at: missing, or docker failed
 
 
 class Assessment(NamedTuple):
@@ -80,7 +81,12 @@ class Assessment(NamedTuple):
 
     @property
     def refused(self):
-        return self.kind is Kind.REFUSED
+        """Whether the container must not run: refused, or not assessed at all."""
+        return self.kind in (Kind.REFUSED, Kind.FAILED)
+
+    @property
+    def failed(self):
+        return self.kind is Kind.FAILED
 
     @property
     def pins_user(self):

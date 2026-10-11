@@ -193,10 +193,10 @@ def test_only_started_services_are_looked_at_and_the_platform_is_passed():
     assert images.created == [("web:1", ["--pull=never", "--platform", "linux/arm64", "--", "web:1"])]
 
 
-def test_an_image_that_is_not_there_is_refused():
+def test_an_image_that_is_not_there_is_a_failure():
     prepared, _, _ = prepare(project(web={"pull_policy": "never"}), FakeImages(users={}, local=set()))
-    assert prepared.problems == [
-        "service web: image web:1: the image is not available locally; set user: to choose one"]
+    assert prepared.problems == ["service web: image web:1: the image is not available locally"]
+    assert prepared.failed  # no user would fix it
 
 
 def test_inspection_errors_are_refusals_and_the_container_is_still_removed():

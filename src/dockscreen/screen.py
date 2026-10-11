@@ -15,7 +15,11 @@ DOCKER_SOCKET = "/var/run/docker.sock"
 
 
 class ScreenError(Exception):
-    """The config could not be inspected; treated as a refusal."""
+    """The project is refused before its config is looked at, or the config could not be inspected."""
+
+
+class InspectError(ScreenError):
+    """The config could not be inspected: no compose file, or compose could not read it."""
 
 
 def inspect(global_args, runtime):
@@ -83,13 +87,13 @@ def load_config(global_args, docker_binary):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except FileNotFoundError:
-        raise ScreenError("'docker' not found in PATH")
+        raise InspectError("'docker' not found in PATH")
     if result.returncode != 0:
-        raise ScreenError(f"docker compose config failed:\n{result.stderr.strip()}")
+        raise InspectError(f"docker compose config failed:\n{result.stderr.strip()}")
     try:
         return json.loads(result.stdout)
     except ValueError as e:
-        raise ScreenError(f"cannot parse docker compose config output: {e}")
+        raise InspectError(f"cannot parse docker compose config output: {e}")
 
 
 REMOTE_MESSAGE = "the daemon is not the default local one; ids and paths cannot be checked"
@@ -145,13 +149,13 @@ def find_compose_dir(start, env_files, home, uid):
             if has_file:
                 raise ScreenError(f"the nearest compose file is in {directory}, which is your home directory "
                                  "or not yours; run from the project directory or use -f")
-            raise ScreenError("no compose file found")
+            raise InspectError("no compose file found")
         refuse_compose_vars_in(os.path.join(directory, ".env"))
         if has_file:
             return directory
         parent = os.path.dirname(directory)
         if parent == directory:
-            raise ScreenError("no compose file found")
+            raise InspectError("no compose file found")
         directory = parent
 
 
