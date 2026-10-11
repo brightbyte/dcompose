@@ -8,6 +8,7 @@ from dockscreen import autofix, composeimages, imagedecision, policy
 from dockscreen import config as configuration
 from dockscreen.dockerclient import DockerError
 from dockscreen.imagedecision import Kind
+from dockscreen.verdict import GOOD, WARN
 
 NOBODY = "65534:65534"
 COMMAND = ["docker", "compose", "-f", "/gen/compose-0.yaml"]  # what prepare is given; only the tail matters
@@ -274,12 +275,12 @@ def test_descriptions_and_notices():
     ctx = gate_context(images)
 
     assert composeimages.describe(config, prepared, ctx) == [
-        ("service db: no user set; image db:1 runs as uid 100000 (no local user), gid 100001 "
+        (f"{GOOD} service db: no user set; image db:1 runs as uid 100000 (no local user), gid 100001 "
          "(no local group); accepted"),
-        ("service debug: no user set and not started by default; "
+        (f"{WARN} service debug: no user set and not started by default; "
          "dockscreen runs it as the default user (65534:65534) if it is started"),
-        ("service web: no user set; image web:1 would run as root; dockscreen runs it as the default user "
-         "(65534:65534)"),
+        (f"{WARN} service web: no user set; image web:1 would run as root; dockscreen runs it as the "
+         "default user (65534:65534)"),
     ]
     assert composeimages.notices(prepared, ctx) == [
         "service web: image web:1 would run as root; dockscreen runs it as the default user (65534:65534)"]
@@ -349,7 +350,8 @@ def test_a_configured_user_applies_to_an_image_pulled_from_that_repository():
     assert final["services"]["db"]["user"] == "999:999" and vetted == {"db"}
     assert composeimages.notices(prepared, gate_context(images, MARIADB)) == []  # configured: no notice
     assert composeimages.describe(mariadb_project(), prepared, gate_context(images, MARIADB)) == [
-        "service db: no user set; image mariadb:11 runs as 999:999, the user the config file sets for it"]
+        f"{GOOD} service db: no user set; image mariadb:11 runs as 999:999, "
+        "the user the config file sets for it"]
 
 
 @pytest.mark.parametrize("fields, digests, why", [
@@ -365,7 +367,8 @@ def test_a_configured_user_does_not_apply_to_an_image_that_only_has_the_name(fie
     assessment = prepared.decisions["db"].assessment
     assert assessment.kind is Kind.FALLBACK  # the normal rules: root runs as the default user
     lines = composeimages.describe(config, prepared, gate_context(images, MARIADB))
-    assert lines[-1] == f"service db: note: the config sets a user for docker.io/library/mariadb, but {why}"
+    assert lines[-1] == (f"{WARN} service db: note: the config sets a user for docker.io/library/mariadb, "
+                         f"but {why}")
 
 
 def test_services_whose_user_the_command_line_chooses_are_not_decided():

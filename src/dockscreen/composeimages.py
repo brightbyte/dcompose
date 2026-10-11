@@ -28,7 +28,7 @@ import subprocess
 from collections.abc import Callable
 from typing import NamedTuple
 
-from dockscreen import argscan, imagedecision, imageuser, policy
+from dockscreen import argscan, imagedecision, imageuser, policy, verdict
 from dockscreen.dockerclient import DockerError
 
 
@@ -233,21 +233,23 @@ def describe(config, prepared, ctx):
     for name in sorted(unset_user_services(config)):
         decision = prepared.decisions.get(name)
         if decision is None:
-            lines.append(f"service {name}: no user set and not started by default; dockscreen runs it "
-                         f"as the default user ({imagedecision.default_user_spec(ctx)}) if it is started")
+            default = imagedecision.default_user_spec(ctx)
+            lines.append(f"{verdict.WARN} service {name}: no user set and not started by default; dockscreen "
+                         f"runs it as the default user ({default}) if it is started")
             continue
-        assessment = decision.assessment
+        assessment, dot = decision.assessment, verdict.dot(decision.assessment)
         if assessment.kind is imagedecision.Kind.OK:
             who = imageuser.describe(assessment.identity, ctx.local)
-            lines.append(f"service {name}: no user set; image {decision.image} runs as {who}; accepted")
+            lines.append(f"{dot} service {name}: no user set; image {decision.image} runs as {who}; "
+                         "accepted")
         elif assessment.kind is imagedecision.Kind.CONFIGURED:
             user = imagedecision.pinned_user(ctx, assessment)
-            lines.append(f"service {name}: no user set; image {decision.image} runs as {user}, "
+            lines.append(f"{dot} service {name}: no user set; image {decision.image} runs as {user}, "
                          "the user the config file sets for it")
         elif assessment.kind is imagedecision.Kind.FALLBACK:
-            lines.append(f"service {name}: no user set; {fallback_text(ctx, decision)}")
+            lines.append(f"{dot} service {name}: no user set; {fallback_text(ctx, decision)}")
         if assessment.note:
-            lines.append(f"service {name}: note: {assessment.note}")
+            lines.append(f"{verdict.WARN} service {name}: note: {assessment.note}")
     return lines
 
 

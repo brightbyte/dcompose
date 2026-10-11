@@ -5,6 +5,7 @@ from fakes import FakeDocker, host_account, rules, runtime
 
 from dockscreen import argscan, config, docker_cli, gate, hostusers, imagedecision
 from dockscreen.dockerclient import DockerError, DockerNotFound, first_file_of_tar
+from dockscreen.verdict import BAD, GOOD, WARN
 
 DEFAULTS = ["--cap-drop=ALL", "--security-opt=no-new-privileges:true"]
 
@@ -455,9 +456,9 @@ def test_audit_without_mounts_creates_the_container_as_run_would_and_never_start
     docker = FakeDocker(image_user="app")
     assert audit(docker, "img") == 0
     assert capsys.readouterr().out.splitlines() == [
-        "image img: runs as uid 100000 (no local user), gid 100001 (no local group); accepted",
-        "docker run would create it again with --user=100000:100001, as numbers",
-        "docker run also adds --cap-drop=ALL --security-opt=no-new-privileges:true; "
+        f"{GOOD} image img: runs as uid 100000 (no local user), gid 100001 (no local group); accepted",
+        "  docker run would create it again with --user=100000:100001, as numbers",
+        "  docker run also adds --cap-drop=ALL --security-opt=no-new-privileges:true; "
         "later options override them",
     ]
     assert docker.names() == ["create", "inspect", "remove"]  # nothing is started
@@ -475,9 +476,9 @@ def test_audit_with_mounts_judges_the_image_user_with_them(capsys):
 def test_audit_of_a_root_image_says_it_runs_as_the_default_user(capsys):
     assert audit(FakeDocker(image_user=""), "img") == 0
     out = capsys.readouterr().out.splitlines()
-    assert out[0] == ("image img: would run as uid 0 (local user root), gid 0 (local group root); "
+    assert out[0] == (f"{WARN} image img: would run as uid 0 (local user root), gid 0 (local group root); "
                       "docker run would run it as the default user (65534:65534) instead")
-    assert out[1] == "docker run would create it again with --user=65534:65534, as numbers"
+    assert out[1] == "  docker run would create it again with --user=65534:65534, as numbers"
 
 
 def test_audit_predicts_a_refusal_and_exits_one(capsys):
@@ -518,14 +519,14 @@ def test_audit_points_out_what_a_project_could_not_ask_for(monkeypatch, tmp_path
 
     assert audit(docker, "img") == 0  # run would still start it: the command line is trusted
 
-    findings = [line for line in capsys.readouterr().out.splitlines() if line.startswith("command line:")]
+    findings = [line for line in capsys.readouterr().out.splitlines() if "command line:" in line]
     assert findings == [
-        "command line: security_opt 'label=disable' is not allowed; "
+        f"{WARN} command line: security_opt 'label=disable' is not allowed; "
         "if bind mounts fail on SELinux, add the :z or :Z mount option instead",
-        "command line: privileged is not allowed",
-        "command line: cap_add is not allowed",
-        "command line: pid: host shares a namespace outside the project",
-        f"command line: bind mount '/etc' is outside {tmp_path}",
+        f"{WARN} command line: privileged is not allowed",
+        f"{WARN} command line: cap_add is not allowed",
+        f"{WARN} command line: pid: host shares a namespace outside the project",
+        f"{WARN} command line: bind mount '/etc' is outside {tmp_path}",
     ]  # the mount inside the current directory and the named volume are fine
 
 
@@ -533,7 +534,7 @@ def test_strict_screen_fails_the_audit_for_command_line_findings(capsys):
     docker = FakeDocker(image_user="nobody", info_extra={"HostConfig": {"Privileged": True}})
     assert gate.audit(ctx(docker), ["img"], strict=True) == 1
     out = capsys.readouterr().out
-    assert "command line: privileged is not allowed" in out
+    assert f"{BAD} command line: privileged is not allowed" in out  # red: it fails the audit
     assert "--strict-screen makes them fail" not in out
 
     assert gate.audit(ctx(FakeDocker(image_user="nobody")), ["img"], strict=True) == 0
@@ -542,21 +543,22 @@ def test_strict_screen_fails_the_audit_for_command_line_findings(capsys):
 def test_audit_of_an_image_docker_cannot_create_fails(capsys):
     docker = FakeDocker(create_code=125)
     assert audit(docker, "img") == 3
-    assert "[dockscreen] audit failed: docker could not create a container for img" in capsys.readouterr().err
+    assert capsys.readouterr().err == (f"[dockscreen] {BAD} docker could not create a container for img\n"
+                                       "[dockscreen] \u2757 audit failed\n")
 
 
 def test_audit_without_docker_fails(capsys):
     docker = FakeDocker()
     docker.create = lambda args: (_ for _ in ()).throw(DockerNotFound("'docker' not found in PATH"))
     assert audit(docker, "--brief", "img") == 3
-    assert capsys.readouterr().out == "failed: 'docker' not found in PATH\n"
+    assert capsys.readouterr().out == "\u2757 failed: 'docker' not found in PATH\n"
 
 
 @pytest.mark.parametrize("args, out, code", [
-    (["--brief", "img"], "passed\n", 0),
+    (["--brief", "img"], "\u2705 passed\n", 0),
     (["-v", "/p:/p", "--brief", "img"],
-     "refused: the image's uid 100000 is not in the nobody range 65530-65534, and there are host mounts; "
-     "pass --user UID:GID, --as NAME or --as-me to choose a user (+1 more)\n", 1),
+     "\u274c refused: the image's uid 100000 is not in the nobody range 65530-65534, "
+     "and there are host mounts; pass --user UID:GID, --as NAME or --as-me to choose a user (+1 more)\n", 1),
 ])
 def test_brief_prints_only_the_verdict(args, out, code, capsys):
     docker = FakeDocker(image_user="app", info_extra=BIND if "-v" in args else None)
@@ -569,7 +571,7 @@ def test_brief_prints_only_the_verdict(args, out, code, capsys):
 def test_brief_with_strict_screen_names_the_command_line_finding(capsys):
     docker = FakeDocker(image_user="nobody", info_extra={"HostConfig": {"Privileged": True}})
     assert gate.audit(ctx(docker), ["--brief", "img"], strict=True) == 1
-    assert capsys.readouterr().out == "refused: privileged is not allowed\n"
+    assert capsys.readouterr().out == "\u274c refused: privileged is not allowed\n"
 
 
 @pytest.mark.parametrize("args", [[], ["--rm"], ["--name"]])

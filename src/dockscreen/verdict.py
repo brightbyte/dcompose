@@ -9,6 +9,7 @@ Exit status 2 is left for usage errors.
 import enum
 
 from dockscreen import messages
+from dockscreen.imagedecision import Kind
 from dockscreen.text import printable
 
 
@@ -18,25 +19,41 @@ class Verdict(enum.IntEnum):
     FAILED = 3
 
 
+# Emoji carry their colour themselves, so they show without terminal colour support.
+ICONS = {Verdict.PASSED: "\u2705", Verdict.REFUSED: "\u274c", Verdict.FAILED: "\u2757"}  # ✅ ❌ ❗
+GOOD = "\U0001f7e2"  # 🟢 accepted as it is
+WARN = "\U0001f7e1"  # 🟡 allowed, but changed by dockscreen or worth a look
+BAD = "\U0001f534"   # 🔴 refused, or could not be checked
+
+
+def dot(assessment):
+    """The dot for a decision about an image's user."""
+    if assessment.refused:
+        return BAD
+    return GOOD if assessment.kind in (Kind.OK, Kind.CONFIGURED) else WARN
+
+
+def line(verdict):
+    """The closing line of an audit: icon and verdict."""
+    return f"{ICONS[verdict]} audit {verdict.name.lower()}"
+
+
 def brief(verdict, reasons):
-    """The verdict in one line, for --brief: `passed`, or the verdict and its first reason."""
+    """The verdict in one line, for --brief: `✅ passed`, or the verdict and its first reason."""
     if verdict is Verdict.PASSED:
-        return "passed"
+        return f"{ICONS[verdict]} passed"
     first = printable(reasons[0]) if reasons else "no reason given"
     more = f" (+{len(reasons) - 1} more)" if len(reasons) > 1 else ""
-    return f"{verdict.name.lower()}: {first}{more}"
+    return f"{ICONS[verdict]} {verdict.name.lower()}: {first}{more}"
 
 
 def report(verdict, reasons, brief_mode=False):
-    """Print the verdict: one line on stdout with brief_mode, else messages on stderr. Returns the exit
-    status."""
+    """Print the verdict: one line on stdout with brief_mode, else each reason and the closing line on
+    stderr. Returns the exit status."""
     if brief_mode:
         print(brief(verdict, reasons))
-    elif verdict is Verdict.REFUSED:
-        messages.report(reasons)
-    elif verdict is Verdict.FAILED:
-        for reason in reasons:
-            messages.notice(f"audit failed: {reason}")
-    else:
-        messages.notice("audit passed")
+        return int(verdict)
+    for reason in reasons:
+        messages.notice(f"{BAD} refusing: {reason}" if verdict is Verdict.REFUSED else f"{BAD} {reason}")
+    messages.notice(line(verdict))
     return int(verdict)

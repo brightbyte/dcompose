@@ -4,6 +4,7 @@ import os
 from fakes import FakeImages, install_tools, make_tools, runtime
 
 from dockscreen import commands, screen
+from dockscreen.verdict import BAD, GOOD, WARN
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -41,10 +42,10 @@ def test_audit_pulls_and_says_what_happens_to_each_service_without_a_user(monkey
     assert captured.err.index("pulling or building the images") < captured.err.index("audit passed")
     assert "pulling or building" not in captured.out
     assert captured.out.splitlines() == [
-        ("service db: no user set; image db:1 runs as uid 100000 (no local user), "
+        (f"{GOOD} service db: no user set; image db:1 runs as uid 100000 (no local user), "
          "gid 100001 (no local group); accepted"),
-        ("service web: no user set; image web:1 would run as root; dockscreen runs it as the default user "
-         "(65534:65534)"),
+        (f"{WARN} service web: no user set; image web:1 would run as root; dockscreen runs it as the "
+         "default user (65534:65534)"),
     ]
     assert [cmd[-3:] for cmd in recorder.children] == [["pull", "cache", "web"]]  # db is already local
 
@@ -74,7 +75,8 @@ def test_a_failed_pull_fails_the_audit_rather_than_refusing(monkeypatch, capsys,
     config = project(web={})
     setup(monkeypatch, tmp_path, config, FakeImages(users={}, local=set()), codes={"pull": 1})
     assert commands.audit([], [], runtime()) == 3
-    assert "[dockscreen] audit failed: docker compose pull web failed" in capsys.readouterr().err
+    assert capsys.readouterr().err.splitlines()[-2:] == [
+        f"[dockscreen] {BAD} docker compose pull web failed", "[dockscreen] \u2757 audit failed"]
 
 
 def test_a_config_compose_cannot_read_fails_the_audit(monkeypatch, capsys):
@@ -82,7 +84,7 @@ def test_a_config_compose_cannot_read_fails_the_audit(monkeypatch, capsys):
         raise screen.InspectError("docker compose config failed:\nbad yaml")
     monkeypatch.setattr(screen, "inspect", unreadable)
     assert commands.audit([], ["--brief"], runtime()) == 3
-    assert capsys.readouterr().out == "failed: docker compose config failed:\\x0abad yaml\n"
+    assert capsys.readouterr().out == "\u2757 failed: docker compose config failed:\\x0abad yaml\n"
 
 
 def test_a_project_refused_before_inspection_is_refused_not_failed(monkeypatch, capsys):
@@ -90,7 +92,7 @@ def test_a_project_refused_before_inspection_is_refused_not_failed(monkeypatch, 
         raise screen.ScreenError("the project directory /home/me contains /home/me")
     monkeypatch.setattr(screen, "inspect", sensitive)
     assert commands.audit([], [], runtime()) == 1
-    assert "[dockscreen] refusing: the project directory /home/me" in capsys.readouterr().err
+    assert f"[dockscreen] {BAD} refusing: the project directory /home/me" in capsys.readouterr().err
 
 
 def test_brief_prints_only_the_verdict(monkeypatch, capsys, tmp_path):
@@ -99,8 +101,8 @@ def test_brief_prints_only_the_verdict(monkeypatch, capsys, tmp_path):
           active=("web", "db"))
     assert commands.audit([], ["--brief"], runtime()) == 1
     captured = capsys.readouterr()
-    assert captured.out == ("refused: service db: image db:1: the image's uid 1000 exists on this host "
-                            "(local user daniel); the image's gid 1000 exists on this host "
+    assert captured.out == ("\u274c refused: service db: image db:1: the image's uid 1000 exists on this "
+                            "host (local user daniel); the image's gid 1000 exists on this host "
                             "(local group daniel); set user: to choose one\n")
     assert captured.err == ""
 
@@ -108,7 +110,7 @@ def test_brief_prints_only_the_verdict(monkeypatch, capsys, tmp_path):
 def test_brief_says_passed(monkeypatch, capsys, tmp_path):
     setup(monkeypatch, tmp_path, project(web={}), FakeImages(users={"web:1": "app"}))
     assert commands.audit([], ["--brief"], runtime()) == 0
-    assert capsys.readouterr().out == "passed\n"
+    assert capsys.readouterr().out == "\u2705 passed\n"
 
 
 def test_audit_takes_only_brief(capsys):

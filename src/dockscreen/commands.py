@@ -69,15 +69,14 @@ def audit(global_args, args, runtime, allow_me=False):
         return verdict.report(Verdict.REFUSED, [str(e)], brief)
 
     outcome, problems, lines = audit_images(project, brief)
-    code = verdict.report(outcome, problems, brief)
     if not brief:
-        lines = [*screen.mount_dir_warnings(runtime), *hardening.describe(project.additions),
-                 *shellenv.describe(project.hardened, runtime.env), *lines]
-        for line in lines:
+        warnings = [*screen.mount_dir_warnings(runtime), *hardening.describe(project.additions),
+                    *shellenv.describe(project.hardened, runtime.env)]
+        for line in [*(f"{verdict.WARN} {w}" for w in warnings), *lines]:
             print(printable(line))
         if problems or project.additions:
             print(HARDEN_HINT)
-    return code
+    return verdict.report(outcome, problems, brief)
 
 
 def audit_images(project, brief):
@@ -85,7 +84,7 @@ def audit_images(project, brief):
     problems = project.problems()
     if problems:
         return Verdict.REFUSED, problems, [
-            "the images were not looked at because of the problems above: nothing was pulled or built"]
+            "the images were not looked at because of the problems below: nothing was pulled or built"]
     if not brief:
         messages.notice("pulling or building the images as `up` would, to look at the users they run as")
     hardened, tools = project.hardened, project.tools

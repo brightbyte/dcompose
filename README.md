@@ -124,7 +124,9 @@ Both audits, `dockscreen audit` and `dockscreen compose audit`, end with one of 
 | 1 | refused | the policy says no |
 | 3 | failed | the audit could not get far enough to judge: no docker, the image could not be pulled or created, the compose config could not be read, a pull or build failed |
 
-Exit status 2 means the audit was called wrongly. `--brief` prints only the verdict, in one line, such as `passed` or `refused: privileged is not allowed (+2 more)`. Output from docker itself, such as pull progress, still appears.
+Exit status 2 means the audit was called wrongly. The report ends with the verdict: ✅ audit passed, ❌ audit refused or ❗ audit failed. Each item in the report has a dot: 🟢 accepted as it is, 🟡 allowed but changed by dockscreen or worth a look, 🔴 refused or not checked.
+
+`--brief` prints only the verdict, in one line, such as `✅ passed` or `❌ refused: privileged is not allowed (+2 more)`. Output from docker itself, such as pull progress, still appears.
 
 Images that start as root and drop privileges themselves, such as postgres or redis, usually need `--user`, `user:` or an `image_users` entry.
 

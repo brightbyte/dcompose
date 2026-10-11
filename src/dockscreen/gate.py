@@ -173,6 +173,7 @@ def audit(ctx, args, strict=False):
     else:
         report_assessment(ctx, parsed.image, assessment)
         report_findings(found, strict)
+        messages.notice(verdict.line(outcome))
     return int(outcome)
 
 
@@ -186,26 +187,27 @@ def audit_verdict(assessment, found, strict):
 
 def report_assessment(ctx, image, assessment):
     """Print what `docker run` would do about the user."""
-    name = printable(image)
+    name, dot = printable(image), verdict.dot(assessment)
     if assessment.kind is Kind.EXPLICIT:
-        print(f"image {name}: the user is set on the command line; the image's own user is not checked")
+        print(f"{dot} image {name}: the user is set on the command line; the image's own user is not checked")
     else:
-        print(f"image {name}: {describe_outcome(ctx, assessment)}")
+        print(f"{dot} image {name}: {describe_outcome(ctx, assessment)}")
         if assessment.note:
-            print(f"  note: {printable(assessment.note)}")
+            print(f"{verdict.WARN} note: {printable(assessment.note)}")
     if assessment.refused:
         if not assessment.failed:
             print(f"  {CHOOSE_HINT}")
         return
     if assessment.pins_user:
-        print(f"docker run would create it again with --user={pinned_user(ctx, assessment)}, as numbers")
-    print("docker run also adds " + " ".join(DEFAULTS) + "; later options override them")
+        print(f"  docker run would create it again with --user={pinned_user(ctx, assessment)}, as numbers")
+    print("  docker run also adds " + " ".join(DEFAULTS) + "; later options override them")
 
 
 def report_findings(found, strict):
     """Print what the command line asks for that a project or an image may not."""
+    dot = verdict.BAD if strict else verdict.WARN
     for finding in found:
-        print(f"command line: {printable(finding)}")
+        print(f"{dot} command line: {printable(finding)}")
     if found and not strict:
         print("  docker run allows these because you gave them; --strict-screen makes them fail the audit")
 
