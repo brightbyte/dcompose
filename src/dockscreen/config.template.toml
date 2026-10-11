@@ -1,0 +1,21 @@
+# dockscreen configuration. Settings here override /etc/dockscreen/config.toml.
+# The commented values are the defaults: uncomment a line to change it.
+# Keep this file and its directories writable by you only, or dockscreen refuses to run.
+
+# The user that replaces an image's root user, as numeric "uid:gid".
+#default_user = "65534:65534"
+
+# Ids any project or image may use, with or without host mounts (inclusive).
+#nobody_range = [65530, 65534]
+
+# Absolute directories, besides the project, that bind mounts may come from.
+#mount_dirs = []
+#mount_dirs = ["/srv/shared-data"]
+
+# The real docker, as an absolute path. By default, the next docker on PATH that is not the wrapper.
+#docker = "/usr/bin/docker"
+
+# The user for every image pulled from a repository (no tag), as numeric "uid:gid".
+[image_users]
+#mariadb = "999:999"
+#"ghcr.io/example/app" = "1234:1234"

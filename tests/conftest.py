@@ -36,9 +36,26 @@ def fixed_docker_binary(monkeypatch):
 @pytest.fixture(autouse=True)
 def fake_image_tools(monkeypatch):
     """`audit` and `harden` pull and build; tests get a docker with no images unless they say otherwise."""
-    from fakes import FakeImages, make_tools
+    from fakes import FakeImages, install_tools, make_tools
 
-    from dockscreen import composerun
     tools, recorder = make_tools(FakeImages())
-    monkeypatch.setattr(composerun, "default_tools", lambda: tools)
+    install_tools(monkeypatch, tools)
     return recorder
+
+
+@pytest.fixture(autouse=True)
+def fake_accounts(monkeypatch):
+    """Names in compose files resolve against fakes.Accounts, not this host's accounts."""
+    from fakes import Accounts
+
+    from dockscreen import hostusers
+    monkeypatch.setattr(hostusers, "Accounts", Accounts)
+
+
+@pytest.fixture(autouse=True)
+def default_config(monkeypatch):
+    """No config file and no subordinate ids: tests see the defaults, whatever this host has."""
+    from dockscreen import config, idrules
+    monkeypatch.setattr(config, "current", lambda: config.Config())
+    monkeypatch.setattr(idrules, "SUBUID_FILE", "/nonexistent/subuid")
+    monkeypatch.setattr(idrules, "SUBGID_FILE", "/nonexistent/subgid")

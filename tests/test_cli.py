@@ -1,6 +1,8 @@
+import os
+
 import pytest
 
-from dockscreen import cli, composerun, guard, policy
+from dockscreen import cli, composerun, hostusers, policy, screen
 from dockscreen.commands import COMMANDS
 
 
@@ -27,7 +29,7 @@ def test_unknown_args_are_forwarded_verbatim(forwarded):
 def test_custom_command_gets_global_args_and_is_not_forwarded(forwarded, monkeypatch):
     seen = {}
 
-    def fake(global_args, args):
+    def fake(global_args, args, allow_me=False):
         seen.update(global_args=global_args, args=args)
         return 7
 
@@ -65,18 +67,20 @@ def test_dockscreen_help_precedes_forwarding(forwarded, capsys, argv, expect_hel
 @pytest.mark.parametrize("subcommand", sorted(cli.RUNTIME_SUBCOMMANDS))
 def test_runtime_subcommands_run_from_the_checked_config(forwarded, monkeypatch, subcommand):
     seen = []
-    monkeypatch.setattr(composerun, "run", lambda argv, idx: seen.append((argv, idx)) or 3)
+    monkeypatch.setattr(composerun, "run",
+                        lambda argv, idx, allow_me: seen.append((argv, idx, allow_me)) or 3)
 
     assert cli.main(["-f", "a.yml", subcommand, "-d"]) == 3
 
-    assert seen == [(["-f", "a.yml", subcommand, "-d"], 2)]
+    assert seen == [(["-f", "a.yml", subcommand, "-d"], 2, False)]
     assert forwarded == []  # composerun runs compose itself, from the hardened config
 
 
 @pytest.mark.parametrize("subcommand", sorted(cli.BUILD_SUBCOMMANDS))
 def test_build_subcommands_get_the_build_rules_and_are_then_forwarded(forwarded, monkeypatch, subcommand):
     seen = []
-    monkeypatch.setattr(guard, "passes", lambda global_args, rules: seen.append((global_args, rules)) or True)
+    monkeypatch.setattr(screen, "passes",
+                        lambda global_args, rules: seen.append((global_args, rules)) or True)
 
     cli.main(["-f", "a.yml", subcommand])
 
@@ -85,19 +89,19 @@ def test_build_subcommands_get_the_build_rules_and_are_then_forwarded(forwarded,
 
 
 def test_build_with_problems_is_not_forwarded(forwarded, monkeypatch):
-    monkeypatch.setattr(guard, "passes", lambda global_args, rules: False)
+    monkeypatch.setattr(screen, "passes", lambda global_args, rules: False)
     assert cli.main(["build"]) == 1
     assert forwarded == []
 
 
-def test_unguarded_subcommand_is_not_inspected(forwarded, monkeypatch):
-    monkeypatch.setattr(guard, "passes", lambda global_args, rules: 1 / 0)
-    monkeypatch.setattr(composerun, "run", lambda argv, idx: 1 / 0)
+def test_unscreened_subcommand_is_not_inspected(forwarded, monkeypatch):
+    monkeypatch.setattr(screen, "passes", lambda global_args, rules: 1 / 0)
+    monkeypatch.setattr(composerun, "run", lambda argv, idx, allow_me: 1 / 0)
     cli.main(["ps"])
     assert forwarded == [["ps"]]
 
 
-@pytest.mark.parametrize("argv, guarded", [
+@pytest.mark.parametrize("argv, screened", [
     (["up"], True),
     (["run", "app", "ls", "-h"], True),
     (["run", "app", "grep", "-h", "foo"], True),
@@ -112,5 +116,52 @@ def test_unguarded_subcommand_is_not_inspected(forwarded, monkeypatch):
     (["logs", "-f"], False),
     ([], False),
 ])
-def test_is_guarded(argv, guarded):
-    assert cli.is_guarded(argv, cli.find_subcommand(argv)) == guarded
+def test_is_screened(argv, screened):
+    assert cli.is_screened(argv, cli.find_subcommand(argv)) == screened
+
+
+# --- dockscreen's own options and the config file ------------------------------------
+
+def test_allow_me_before_the_subcommand_reaches_the_checks_and_not_compose(forwarded, monkeypatch):
+    seen = []
+    monkeypatch.setattr(composerun, "run", lambda argv, idx, allow_me: seen.append((argv, allow_me)) or 0)
+    cli.main(["--allow-me", "-f", "a.yml", "up"])
+    assert seen == [(["-f", "a.yml", "up"], True)]
+
+
+def test_as_me_before_the_subcommand_is_refused(forwarded, capsys):
+    assert cli.main(["--as-me", "up"]) == 2
+    assert "--as-me goes after run or exec" in capsys.readouterr().err and forwarded == []
+
+
+def test_exec_as_me_reaches_compose_as_the_callers_ids(forwarded):
+    assert cli.main(["exec", "--as-me", "web", "sh"]) is None
+    assert forwarded == [["exec", f"--user={os.getuid()}:{os.getgid()}", "web", "sh"]]
+
+
+@pytest.mark.parametrize("argv, code", [
+    (["exec", "-u", "0:0", "web", "sh"], None), (["exec", "web", "sh"], None),
+    (["exec", "-u", "postgres", "web", "sh"], 1), (["exec", "--user=1000", "web", "sh"], 1),
+])
+def test_exec_takes_numeric_users_only(forwarded, capsys, argv, code):
+    assert cli.main(argv) == code
+    assert forwarded == ([] if code else [argv])
+
+
+def test_exec_as_a_local_user_reaches_compose_as_numeric_ids(forwarded, monkeypatch, capsys):
+    monkeypatch.setattr(hostusers, "resolve_account",
+                        lambda name: ("1001:1002", [f"Resolving user {name} to uid 1001, gid 1002"]))
+    assert cli.main(["exec", "--as", "alice", "web", "sh"]) is None
+    assert forwarded == [["exec", "--user=1001:1002", "web", "sh"]]
+    assert "Resolving user alice" in capsys.readouterr().err
+
+
+def test_a_config_file_that_cannot_be_trusted_stops_everything(forwarded, monkeypatch, capsys):
+    from dockscreen import config
+
+    def broken():
+        raise config.ConfigError("/home/me/.config/dockscreen/config.toml: /home/me is writable by others")
+    monkeypatch.setattr(config, "current", broken)
+
+    assert cli.main(["ps"]) == 1
+    assert "refusing: config file /home/me/.config" in capsys.readouterr().err and forwarded == []

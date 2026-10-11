@@ -32,8 +32,10 @@ SHORT_VALUE_FLAGS = frozenset("acehlmpuvw")
 
 
 # Not docker options: replaced by `--user=uid:gid` before docker sees them.
-AS_ME_FLAG = "--as-me"  # the caller's own uid:gid
+AS_ME_FLAG = "--as-me"  # the caller's own uid:gid; implies --allow-me
 AS_FLAG = "--as"        # a local user by name, resolved on this host
+# Not a docker option either, and dropped: the caller's own ids may be the image's user.
+ALLOW_ME_FLAG = "--allow-me"
 
 
 class ParseError(Exception):
@@ -48,6 +50,7 @@ class ParsedRun(NamedTuple):
     detach_keys: str
     user_given: bool  # --user, -u, --as or --as-me before the image
     notices: list     # what resolving user names on this host did, for the caller to print
+    allow_me: bool = False  # --allow-me or --as-me before the image
 
 
 class _State:
@@ -59,6 +62,7 @@ class _State:
         self.detach = False
         self.detach_keys = None
         self.user_given = False
+        self.allow_me = False
 
     def user_value(self, value):
         """The value of --user or -u: numeric ids only."""
@@ -97,7 +101,7 @@ def parse(args, current_user, resolve=hostusers.resolve_account):
     if i >= len(args):
         raise ParseError("no image found in the command line")
     return ParsedRun([*state.kept, *args[i:]], args[i], args[i + 1:], state.detach, state.detach_keys,
-                     state.user_given, state.notices)
+                     state.user_given, state.notices, state.allow_me)
 
 
 def parse_long(args, i, state):
@@ -105,8 +109,10 @@ def parse_long(args, i, state):
     token = args[i]
     name, has_value, value = token.partition("=")
     if name == AS_ME_FLAG:
-        state.user_given = True
+        state.user_given = state.allow_me = True
         state.kept.append(f"--user={state.current_user}")
+    elif name == ALLOW_ME_FLAG:
+        state.allow_me = True
     elif name == AS_FLAG:
         if not has_value:
             i += 1

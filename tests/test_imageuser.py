@@ -94,27 +94,6 @@ def test_an_image_with_a_negative_id_is_an_error():
         imageuser.resolve("app", "app:x:-5:-5\n", "")
 
 
-def check(identity, local=None):
-    return imageuser.check(identity, local or Local())
-
-
-@pytest.mark.parametrize("identity", [
-    imageuser.Identity(100000, 100001, (100002,)),
-    imageuser.Identity(65532, 65532, ()),     # distroless nonroot
-    imageuser.Identity(999, 999, (998,)),     # postgres, mariadb: low, but this host has no such account
-    imageuser.Identity(1, 1, ()),
-])
-def test_ids_that_are_not_root_and_unknown_to_the_host_are_accepted_whatever_their_size(identity):
-    assert check(identity) == []
-
-
-def test_is_nobody_means_every_id_is_65534():
-    assert imageuser.is_nobody(imageuser.Identity(65534, 65534, ()))
-    assert imageuser.is_nobody(imageuser.Identity(65534, 65534, (65534,)))
-    assert not imageuser.is_nobody(imageuser.Identity(65534, 65534, (5,)))
-    assert not imageuser.is_nobody(imageuser.Identity(65534, 1, ()))
-
-
 def test_root_is_what_makes_an_identity_fall_back():
     assert imageuser.involves_root(imageuser.Identity(0, 5, ()))
     assert imageuser.involves_root(imageuser.Identity(5, 0, ()))
@@ -125,31 +104,6 @@ def test_root_is_what_makes_an_identity_fall_back():
 def test_describe():
     assert imageuser.describe(imageuser.Identity(5, 6, ())) == "uid 5, gid 6"
     assert imageuser.describe(imageuser.Identity(5, 6, (7, 8))) == "uid 5, gid 6, supplementary gids 7, 8"
-
-
-def test_nobody_is_exempt_everywhere():
-    local = Local({65534: "nobody"}, {65534: "nogroup"})
-    assert check(imageuser.Identity(65534, 65534, (65534,)), local) == []
-
-
-@pytest.mark.parametrize("identity, reason", [
-    (imageuser.Identity(0, 100001, ()), "uid 0 (root)"),
-    (imageuser.Identity(100000, 0, ()), "gid 0 (root)"),
-    (imageuser.Identity(100000, 100001, (0,)), "supplementary gid 0 (root)"),
-])
-def test_root_is_refused_in_every_position(identity, reason):
-    problems = check(identity)
-    assert len(problems) == 1 and reason in problems[0]
-
-
-def test_ids_that_exist_on_this_host_are_refused_with_the_local_account_named():
-    local = Local(uids={1000: "daniel"}, gids={100001: "staff", 999: "docker", 100002: "wheel"})
-    assert check(imageuser.Identity(1000, 100001, (999, 100002)), local) == [
-        "the image would run with uid 1000, which exists on this host (local user daniel)",
-        "the image would run with gid 100001, which exists on this host (local group staff)",
-        "the image would run with supplementary gid 999, which exists on this host (local group docker)",
-        "the image would run with supplementary gid 100002, which exists on this host (local group wheel)",
-    ]
 
 
 def test_describe_with_the_local_accounts_says_who_the_ids_are():

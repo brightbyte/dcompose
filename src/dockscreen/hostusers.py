@@ -5,6 +5,7 @@ to root. So `--user` takes only numbers, which mean the same everywhere, and `--
 name of an account on this host and turns it into ids before docker sees it.
 """
 
+import grp
 import pwd
 
 
@@ -16,7 +17,10 @@ class UnknownUser(UserError):
     pass
 
 
-def require_numeric(spec):
+DOCKER_ALTERNATIVES = "; --as NAME runs as a local user, --as-me as yourself"
+
+
+def require_numeric(spec, alternatives=DOCKER_ALTERNATIVES):
     """`uid:gid`, as typed; anything else is an error that says what to use instead.
 
     A uid alone would leave the group to the image: docker takes it, and the supplementary groups,
@@ -26,8 +30,7 @@ def require_numeric(spec):
     if _is_id(user) and colon and _is_id(group):
         return spec
     hint = "; give the group too, as uid:gid" if _is_id(user) and not colon else ""
-    raise UserError(f"--user takes numeric ids as uid:gid, not {spec!r}{hint}; "
-                    "--as NAME runs as a local user, --as-me as yourself")
+    raise UserError(f"--user takes numeric ids as uid:gid, not {spec!r}{hint}{alternatives}")
 
 
 def resolve_account(name, getpwnam=pwd.getpwnam):
@@ -45,3 +48,22 @@ def resolve_account(name, getpwnam=pwd.getpwnam):
 
 def _is_id(text):
     return text.isascii() and text.isdigit()
+
+
+class Accounts:
+    """Users and groups on this host, by name, through NSS (so LDAP and sssd accounts count)."""
+
+    def user(self, name):
+        """(uid, primary gid) of the user called name, or None."""
+        try:
+            account = pwd.getpwnam(name)
+        except KeyError:
+            return None
+        return account.pw_uid, account.pw_gid
+
+    def group(self, name):
+        """The gid of the group called name, or None."""
+        try:
+            return grp.getgrnam(name).gr_gid
+        except KeyError:
+            return None

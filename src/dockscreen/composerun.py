@@ -20,7 +20,19 @@ import subprocess
 import sys
 import tempfile
 
-from dockscreen import composeimages, gate, guard, hardening, imageuser, policy, realdocker, shellenv
+from dockscreen import (
+    composeargs,
+    composeimages,
+    gate,
+    hardening,
+    hostusers,
+    idrules,
+    imageuser,
+    policy,
+    realdocker,
+    screen,
+    shellenv,
+)
 from dockscreen.dockerclient import Docker
 from dockscreen.text import printable
 
@@ -29,42 +41,62 @@ REPLACED_OPTIONS = ("--file", "-f", "--project-directory", "--project-name", "-p
 FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)
 
 
-def run(argv, idx, tools=None):
+def run(argv, idx, tools=None, allow_me=False):
     """Harden and check the project, then run argv[idx:] (a subcommand that starts containers) on it.
 
     The images of services that set no user are acquired first, by the project's pull policy, and
     decided on (composeimages); the config that runs is the one that was checked, with the result.
+    allow_me: --allow-me was given, so the caller's own ids are allowed.
     """
     global_args, args = argv[:idx], argv[idx + 1:]
     try:
-        config, project_dir = guard.inspect(global_args)
+        parsed = command_line(argv[idx], args)
+        args = parsed.args
+        config, project_dir = screen.inspect(global_args)
         hardened, additions = hardening.apply(config)
-        ctx = guard.context(project_dir)
+        ctx = screen.context(project_dir, allow_me)
         problems = policy.check_config(hardened, vetting_all(ctx, hardened))
         if not hardened.get("name"):
             problems.append("config has no project name")
-        tools = tools or default_tools()
-        if guard.is_remote(global_args, os.environ, tools.docker):
-            problems.append(guard.REMOTE_MESSAGE)
-    except (guard.GuardError, ValueError) as e:
+        tools = tools or default_tools(allow_me)
+        if screen.is_remote(global_args, os.environ, tools.docker):
+            problems.append(screen.REMOTE_MESSAGE)
+    except (screen.ScreenError, hostusers.UserError, ValueError) as e:
         problems = [str(e)]
-    if not guard.report(problems):
+    if not screen.report(problems):
         return 1
 
+    lines = [*parsed.notices, *screen.mount_dir_warnings(os.environ),
+             gate.root_default_notice(tools.gate_ctx)]
     if additions:
-        print(f"dockscreen: {printable(hardening.summary(additions))}", file=sys.stderr)
-    for line in shellenv.describe(hardened, os.environ):
-        print(f"dockscreen: {printable(line)}", file=sys.stderr)
+        lines.append(hardening.summary(additions))
+    lines += shellenv.describe(hardened, os.environ)
     with generated(global_args, project_dir) as command:
-        prepared = composeimages.prepare(command(hardened), hardened, args, tools)
-        if not guard.report(prepared.problems):
+        prepared = composeimages.prepare(command(hardened), hardened, args, tools, chosen(parsed))
+        if not screen.report(prepared.problems):
             return 1
-        final, vetted = composeimages.finalize(hardened, prepared)
-        if not guard.report(policy.check_config(final, ctx._replace(vetted=vetted))):  # what will run
+        final, vetted = composeimages.finalize(hardened, prepared, tools.gate_ctx)
+        if not screen.report(policy.check_config(final, ctx._replace(vetted=vetted))):  # what will run
             return 1
-        for notice in composeimages.notices(prepared, tools.gate_ctx.local):
-            print(f"dockscreen: {printable(notice)}", file=sys.stderr)
-        return tools.run_child([*command(final), *argv[idx:]])
+        for line in [*lines, *composeimages.notices(prepared, tools.gate_ctx)]:
+            if line:
+                print(f"dockscreen: {printable(line)}", file=sys.stderr)
+        return tools.run_child([*command(final), argv[idx], *args])
+
+
+def command_line(subcommand, args):
+    """args read as composeargs does for `run`, with --as resolved; other subcommands as they are.
+
+    Raises hostusers.UserError for a user that is not numeric `uid:gid`, or an unknown --as name.
+    """
+    if subcommand != "run":
+        return composeargs.Parsed(None, False, args, [])
+    return composeargs.parse("run", args)
+
+
+def chosen(parsed):
+    """The services whose user the command line chooses: `run -u uid:gid SERVICE` or `run --as NAME`."""
+    return frozenset({parsed.service}) if parsed.user_given and parsed.service else frozenset()
 
 
 def vetting_all(ctx, config):
@@ -86,15 +118,15 @@ def generated(global_args, project_dir):
             with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
                 json.dump(config, f)  # JSON is YAML
             return [
-                realdocker.docker_bin(), "compose", *guard.strip_options(global_args, REPLACED_OPTIONS),
+                realdocker.docker_bin(), "compose", *screen.strip_options(global_args, REPLACED_OPTIONS),
                 "-f", path, "--project-directory", project_dir, "--project-name", config["name"],
             ]
         yield command
 
 
-def default_tools():
+def default_tools(allow_me=False):
     docker = Docker()
-    gate_ctx = gate.Context(docker, imageuser.LocalIds())
+    gate_ctx = gate.Context(docker, idrules.rules(imageuser.LocalIds(), allow_me))
     return composeimages.Tools(
         docker, gate_ctx, lambda cmd: subprocess.run(cmd, capture_output=True, text=True, check=False),
         run_child)

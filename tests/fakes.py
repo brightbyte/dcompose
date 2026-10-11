@@ -3,7 +3,7 @@ import json
 import os
 import subprocess
 
-from dockscreen import composeimages, gate, hostusers
+from dockscreen import composeimages, config, gate, hostusers, idrules
 from dockscreen.dockerclient import DockerError
 
 PASSWD = ("app:x:100000:100001::/:/bin/sh\nroot:x:0:0::/:/bin/sh\nweb:x:1000:1000::/:/bin/sh\n"
@@ -24,6 +24,32 @@ class Local:
         return {0: "root", 1000: "daniel", 999: "docker"}.get(gid)
 
 
+class NoSubordinate:
+    def contains(self, kind, value):
+        return False
+
+
+def rules(me=(4242, 4343), allow_me=False, local=None, settings=None, subordinate=None):
+    """idrules.Rules for a host like Local, with the default config unless settings says otherwise.
+
+    The caller is 4242:4343 (alice in Accounts), so that 1000 is someone else: daniel, a local account.
+    """
+    settings = settings or config.Config()
+    return idrules.Rules(me, allow_me, settings.nobody_range, settings.default_user, local or Local(),
+                         subordinate or NoSubordinate())
+
+
+class Accounts:
+    """hostusers.Accounts for a host like Local, plus alice (4242:4343) who has no matching group."""
+
+    def user(self, name):
+        users = {"root": (0, 0), "nobody": (65534, 65534), "daniel": (1000, 1000), "alice": (4242, 4343)}
+        return users.get(name)
+
+    def group(self, name):
+        return {"root": 0, "nogroup": 65534, "nobody": 65534, "daniel": 1000, "docker": 999}.get(name)
+
+
 REAL_RESOLVE = hostusers.resolve_account  # tests that replace it by host_account must not recurse
 
 
@@ -41,8 +67,9 @@ def host_account(name):
 class FakeImages:
     """A docker that knows images by name: the user each sets, and which are present locally."""
 
-    def __init__(self, users=None, local=None):
+    def __init__(self, users=None, local=None, digests=None):
         self.users = users or {}
+        self.digests = digests or {}  # image name -> RepoDigests: where it was pulled from
         self.local = set(self.users if local is None else local)
         self.calls = []
         self.created = []
@@ -59,7 +86,8 @@ class FakeImages:
         ref = next((name for name in self.local if self.image_id(name) == ref), ref)  # an id or a name
         if ref not in self.local:
             raise DockerError(f"No such image: {ref}")
-        return {"Id": self.image_id(ref), "Config": {"User": self.users.get(ref, "")}}
+        return {"Id": self.image_id(ref), "Config": {"User": self.users.get(ref, "")},
+                "RepoDigests": self.digests.get(ref, [])}
 
     def create(self, args):
         self.calls.append(("create", args))
@@ -93,7 +121,7 @@ class Recorder:
         self.captured = []
 
 
-def make_tools(images=None, active=("web",), codes=None, on_child=None, reads=None):
+def make_tools(images=None, active=("web",), codes=None, on_child=None, reads=None, gate_ctx=None):
     """(tools, recorder). codes: exit code by compose subcommand, default 0; the last child is `up` etc.
 
     reads: changes the config `docker compose config` reports for a generated file (a compose that
@@ -121,7 +149,7 @@ def make_tools(images=None, active=("web",), codes=None, on_child=None, reads=No
             return subprocess.CompletedProcess(cmd, 0, json.dumps(reads(config) if reads else config), "")
         return subprocess.CompletedProcess(cmd, 0, "\n".join(active) + "\n", "")
 
-    gate_ctx = gate.Context(images, Local(), current_user=(1000, 1000))
+    gate_ctx = gate_ctx or gate.Context(images, rules(), config.Config(), current_user=(1000, 1000))
     return composeimages.Tools(images, gate_ctx, capture, run_child), recorder
 
 
@@ -137,3 +165,10 @@ def read_raw(cmd):
         return None
     with open(cmd[cmd.index("-f") + 1]) as f:
         return f.read()
+
+
+def install_tools(monkeypatch, tools):
+    """Make composerun.default_tools return tools, with --allow-me applied as the real one does."""
+    from dockscreen import composerun
+    monkeypatch.setattr(composerun, "default_tools", lambda allow_me=False: tools._replace(
+        gate_ctx=gate.allowing_me(tools.gate_ctx, allow_me)))

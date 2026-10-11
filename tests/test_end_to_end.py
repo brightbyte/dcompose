@@ -73,11 +73,11 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(realdocker, "docker_bin", lambda: str(docker))
     # the real tools: real subprocesses against the fake script
     tools = composerun.composeimages.Tools(
-        composerun.Docker(), composerun.gate.Context(composerun.Docker(), fakes.Local(),
-                                                     (1000, 1000)),
+        composerun.Docker(), composerun.gate.Context(composerun.Docker(), fakes.rules(),
+                                                     current_user=(1000, 1000)),
         lambda cmd: __import__("subprocess").run(cmd, capture_output=True, text=True, check=False),
         composerun.run_child)
-    monkeypatch.setattr(composerun, "default_tools", lambda: tools)
+    fakes.install_tools(monkeypatch, tools)
 
     work = tmp_path / "work"
     work.mkdir()
@@ -88,7 +88,7 @@ def project(tmp_path, monkeypatch):
         config = {"name": "proj", "services": {"web": {"image": "x:1", **service}}}
         (fake_dir / "config.json").write_text(json.dumps(config))
 
-    configure(user=f"{UID}:{GID}")
+    configure(user="65534:65534")
     return fake_dir, work, configure
 
 
@@ -125,7 +125,7 @@ def test_up_pulls_then_runs_compose_from_the_hardened_file_and_returns_its_exit_
     assert "hardening defaults added: web (cap_drop, security_opt)" in capsys.readouterr().err
 
 
-def test_a_root_image_is_run_as_nobody_from_a_pinned_generated_file(project, capsys):
+def test_a_root_image_is_run_as_the_default_user_from_a_pinned_generated_file(project, capsys):
     fake_dir, _, configure = project
     configure(pull_policy="always")  # no user: the image decides
 
@@ -138,7 +138,7 @@ def test_a_root_image_is_run_as_nobody_from_a_pinned_generated_file(project, cap
     web = json.loads((fake_dir / "file-read").read_text())["services"]["web"]
     assert web["user"] == "65534:65534" and web["pull_policy"] == "never"
     err = capsys.readouterr().err
-    assert "image x:1 would run as root; dockscreen runs it as nobody (65534:65534)" in err
+    assert "image x:1 would run as root; dockscreen runs it as the default user (65534:65534)" in err
 
 
 def test_an_image_that_chose_a_low_user_is_refused_and_nothing_starts(project, capsys):
@@ -150,7 +150,7 @@ def test_an_image_that_chose_a_low_user_is_refused_and_nothing_starts(project, c
 
     assert not (fake_dir / "file-read").exists()  # compose never ran on the project
     err = capsys.readouterr().err
-    assert "service web: image x:1: the image would run with uid 1000, which exists on this host" in err
+    assert "service web: image x:1: the image's uid 1000 exists on this host" in err
 
 
 def test_a_refused_project_never_starts_compose(project, capsys):
@@ -163,4 +163,4 @@ def test_a_refused_project_never_starts_compose(project, capsys):
     # only the config call and the look at the daemon's context: nothing was pulled either
     assert [c[0] for c in calls(fake_dir)] == ["compose", "context"]
     err = capsys.readouterr().err
-    assert "privileged is not allowed" in err and "user '0'" in err
+    assert "privileged is not allowed" in err and "user '0:0': uid 0 is root" in err

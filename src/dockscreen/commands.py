@@ -15,11 +15,11 @@ from dockscreen import (
     autofix,
     composeimages,
     composerun,
-    guard,
     hardening,
     patch,
     policy,
     realdocker,
+    screen,
     shellenv,
 )
 from dockscreen.text import printable
@@ -42,29 +42,31 @@ HARDEN_HINT = "hint: the harden subcommand prints a compose override file with t
 
 
 @command("doctor")
-def doctor(global_args, args):
+def doctor(global_args, args, allow_me=False):
     """Show the docker compose version that other commands are forwarded to."""
     return subprocess.call([realdocker.docker_bin(), "compose", *global_args, "version", *args])
 
 
 @command("audit")
-def audit(global_args, args):
-    """Run the checks that guard `up` without starting anything; pulls and builds images as up would."""
+def audit(global_args, args, allow_me=False):
+    """Run the checks that screen `up` without starting anything; pulls and builds images as up would."""
     if args:
         print("usage: dockscreen [compose options] audit", file=sys.stderr)
         return 2
 
     lines = []
     try:
-        config, project_dir = guard.inspect(global_args)
+        config, project_dir = screen.inspect(global_args)
         hardened, additions = hardening.apply(config)
-        problems = policy.check_config(hardened, composerun.vetting_all(guard.context(project_dir), hardened))
-        tools = composerun.default_tools()
-        if guard.is_remote(global_args, os.environ, tools.docker):
-            problems.append(guard.REMOTE_MESSAGE)
-    except (guard.GuardError, ValueError) as e:
+        ctx = composerun.vetting_all(screen.context(project_dir, allow_me), hardened)
+        problems = policy.check_config(hardened, ctx)
+        tools = composerun.default_tools(allow_me)
+        if screen.is_remote(global_args, os.environ, tools.docker):
+            problems.append(screen.REMOTE_MESSAGE)
+    except (screen.ScreenError, ValueError) as e:
         config, additions, problems = None, [], [str(e)]
 
+    lines += screen.mount_dir_warnings(os.environ)
     lines += hardening.describe(additions)
     if config is not None:
         lines += shellenv.describe(hardened, os.environ)
@@ -77,9 +79,9 @@ def audit(global_args, args):
         with composerun.generated(global_args, project_dir) as command:
             prepared = composeimages.prepare(command(hardened), hardened, [], tools)
         problems = prepared.problems
-        lines += composeimages.describe(hardened, prepared, tools.gate_ctx.local)
+        lines += composeimages.describe(hardened, prepared, tools.gate_ctx)
 
-    passed = guard.report(problems)
+    passed = screen.report(problems)
     if passed:
         print("dockscreen: audit passed", file=sys.stderr)
     if config is not None:
@@ -91,7 +93,7 @@ def audit(global_args, args):
 
 
 @command("harden", "fix")
-def harden(global_args, args):
+def harden(global_args, args, allow_me=False):
     """Print a compose override that fixes what can be fixed; exit 1 if problems remain.
 
     The patch is relative to the merged config as dockscreen will run it, defaults
@@ -100,15 +102,18 @@ def harden(global_args, args):
     project become placeholders to edit; problems without a safe automatic fix are
     listed as comments. Images are pulled and built first, as `up` would, to see
     which services need a user of their own.
+
+    A user that has to be set becomes `${UID}:${GID}`, the caller's own, so the result is checked as
+    if --allow-me were given, and the patch says that it needs it.
     """
     try:
-        config, project_dir = guard.inspect(global_args)
+        config, project_dir = screen.inspect(global_args)
         base, _ = hardening.apply(config)
-        static = composerun.vetting_all(guard.context(project_dir), base)
-        tools = composerun.default_tools()
-        if guard.is_remote(global_args, os.environ, tools.docker):
-            raise guard.GuardError(guard.REMOTE_MESSAGE)
-    except (guard.GuardError, ValueError) as e:
+        static = composerun.vetting_all(screen.context(project_dir, allow_me=True), base)
+        tools = composerun.default_tools(allow_me=True)
+        if screen.is_remote(global_args, os.environ, tools.docker):
+            raise screen.ScreenError(screen.REMOTE_MESSAGE)
+    except (screen.ScreenError, ValueError) as e:
         print(f"dockscreen: {printable(e)}", file=sys.stderr)
         return 1
 

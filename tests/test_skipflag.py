@@ -2,7 +2,7 @@ import pytest
 
 from dockscreen import cli, docker_cli, skipflag
 
-FLAG = "--skip-security-gate"
+FLAG = "--skip-screening"
 
 
 @pytest.mark.parametrize("argv, found, rest", [
@@ -23,17 +23,17 @@ def test_banner_goes_to_stderr(capsys):
     skipflag.banner()
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "security gate is disabled" in captured.err and "no defaults are added" in captured.err
+    assert "screening is disabled" in captured.err and "no defaults are added" in captured.err
 
 
 def test_dockscreen_with_the_flag_is_plain_compose_with_a_warning(forwarded, monkeypatch, capsys):
     monkeypatch.setattr(cli.composerun, "run", lambda argv, idx: 1 / 0)
-    monkeypatch.setattr(cli.guard, "passes", lambda *a: 1 / 0)
+    monkeypatch.setattr(cli.screen, "passes", lambda *a: 1 / 0)
 
     cli.main([FLAG, "-f", "a.yml", "up", "-d"])
 
     assert forwarded == [["-f", "a.yml", "up", "-d"]]
-    assert "security gate is disabled" in capsys.readouterr().err
+    assert "screening is disabled" in capsys.readouterr().err
 
 
 def test_dockscreen_flag_also_skips_the_extra_subcommands(forwarded):
@@ -54,7 +54,7 @@ def test_docker_with_the_flag_is_plain_docker_with_a_warning(monkeypatch, capsys
     docker_cli.main(argv)
 
     assert calls == [expected]  # no defaults added, no gate, no dockscreen
-    assert "security gate is disabled" in capsys.readouterr().err
+    assert "screening is disabled" in capsys.readouterr().err
 
 
 def test_docker_without_a_global_flag_gets_no_exemption(monkeypatch):

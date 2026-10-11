@@ -1,6 +1,8 @@
 import os
 
-from dockscreen import autofix, commands, guard, patch, policy
+from fakes import rules
+
+from dockscreen import autofix, commands, patch, policy, screen
 
 UID = os.getuid()
 GID = os.getgid()
@@ -16,12 +18,12 @@ def compliant(**service):
 
 def test_patch_resets_removed_keys_and_overrides_changed_ones():
     original = config(user="0:0", privileged=True, group_add=["0", str(GID)], image="x")
-    fixed = autofix.fix_config(original, policy.Context('/proj', UID, GID))
+    fixed = autofix.fix_config(original, policy.Context('/proj', rules(me=(UID, GID), allow_me=True)))
 
     lines = patch.render(original, fixed).splitlines()
 
-    assert '    user: "${DOCKSCREEN_UID}:${DOCKSCREEN_GID}"' in lines
-    assert any("DOCKSCREEN_UID" in line and line.startswith("# note") for line in lines)
+    assert '    user: "${UID}:${GID}"' in lines
+    assert any("--allow-me" in line and line.startswith("# note") for line in lines)
     assert "    privileged: !reset null" in lines
     assert f'    group_add: !override ["{GID}"]' in lines
     # untouched keys are not repeated
@@ -30,7 +32,7 @@ def test_patch_resets_removed_keys_and_overrides_changed_ones():
 
 def test_patch_for_compliant_config_is_empty():
     original = compliant()
-    fixed = autofix.fix_config(original, policy.Context('/proj', UID, GID))
+    fixed = autofix.fix_config(original, policy.Context('/proj', rules(me=(UID, GID), allow_me=True)))
     assert patch.render(original, fixed).splitlines()[-1] == "services: {}"
 
 
@@ -41,7 +43,7 @@ def test_unfixed_problems_are_listed_as_comments():
 
 def test_fix_command_prints_patch_and_fails_when_problems_remain(monkeypatch, capsys, tmp_path):
     original = config(user="0:0", build={"context": "/"})
-    monkeypatch.setattr(guard, "inspect", lambda global_args: (original, str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args: (original, str(tmp_path)))
 
     assert commands.harden([], []) == 1
 
@@ -52,7 +54,7 @@ def test_fix_command_prints_patch_and_fails_when_problems_remain(monkeypatch, ca
 
 def test_patch_replaces_mount_list_and_tells_user_to_edit_placeholders(tmp_path):
     original = compliant(volumes=[{"type": "bind", "source": "/etc", "target": "/e"}])
-    fixed = autofix.fix_config(original, policy.Context(str(tmp_path), UID, GID))
+    fixed = autofix.fix_config(original, policy.Context(str(tmp_path), rules(me=(UID, GID), allow_me=True)))
 
     text = patch.render(original, fixed)
 

@@ -1,9 +1,9 @@
 """`audit` and `harden` pull and build as `up` would, then say what happens to services without a user."""
 import os
 
-from fakes import FakeImages, make_tools
+from fakes import FakeImages, install_tools, make_tools
 
-from dockscreen import commands, composerun, guard
+from dockscreen import commands, screen
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -16,9 +16,9 @@ def project(**services):
 
 
 def setup(monkeypatch, tmp_path, config, images, **kwargs):
-    monkeypatch.setattr(guard, "inspect", lambda global_args: (config, str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args: (config, str(tmp_path)))
     tools, recorder = make_tools(images, **kwargs)
-    monkeypatch.setattr(composerun, "default_tools", lambda: tools)
+    install_tools(monkeypatch, tools)
     return recorder
 
 
@@ -29,7 +29,7 @@ def pulls(recorder):
 # --- audit ----------------------------------------------------------------------
 
 def test_audit_pulls_and_says_what_happens_to_each_service_without_a_user(monkeypatch, capsys, tmp_path):
-    config = project(web={}, db={}, cache={"user": f"{UID}:{GID}"})
+    config = project(web={}, db={}, cache={"user": "65534:65534"})
     images = FakeImages(users={"web:1": "", "db:1": "app", "cache:1": ""}, local={"db:1"})
     recorder = setup(monkeypatch, tmp_path, config, images, active=("web", "db", "cache"))
 
@@ -43,7 +43,8 @@ def test_audit_pulls_and_says_what_happens_to_each_service_without_a_user(monkey
     assert captured.out.splitlines() == [
         ("service db: no user set; image db:1 runs as uid 100000 (no local user), "
          "gid 100001 (no local group); accepted"),
-        "service web: no user set; image web:1 would run as root; dockscreen runs it as nobody (65534:65534)",
+        ("service web: no user set; image web:1 would run as root; dockscreen runs it as the default user "
+         "(65534:65534)"),
     ]
     assert [cmd[-3:] for cmd in recorder.children] == [["pull", "cache", "web"]]  # db is already local
 
@@ -54,7 +55,7 @@ def test_audit_refuses_an_image_that_chose_a_low_user(monkeypatch, capsys, tmp_p
 
     assert commands.audit([], []) == 1
 
-    assert "service web: image web:1: the image would run with uid 1000" in capsys.readouterr().err
+    assert "service web: image web:1: the image's uid 1000 exists on this host" in capsys.readouterr().err
 
 
 def test_audit_does_not_pull_or_build_a_project_that_fails_the_static_checks(monkeypatch, capsys, tmp_path):
@@ -95,7 +96,8 @@ def test_harden_writes_nothing_for_a_root_image_and_never_the_pull_pin(monkeypat
     assert "pull_policy" not in out and "never" not in out  # the pin lives in the generated file only
     assert "user:" not in out.replace("sets no user", "")
     assert pulls(recorder) == [["pull", "web"]]  # the project's always policy: the images were looked at
-    assert "runs a service that sets no user as nobody when its image would run as root" in out
+    assert ("runs a service that sets no user as the configured default user when its image would run "
+            "as root") in out
 
 
 def test_harden_sets_a_user_where_the_image_chose_one_that_is_not_acceptable(monkeypatch, capsys, tmp_path):
@@ -109,7 +111,8 @@ def test_harden_sets_a_user_where_the_image_chose_one_that_is_not_acceptable(mon
     assert ("# note: service web: image web:1 chose a user that is not acceptable, "
             "so user is set explicitly") in out
     body = out.split("services:", 1)[1]
-    assert '"web":' in body and '    user: "${DOCKSCREEN_UID}:${DOCKSCREEN_GID}"' in body
+    assert '"web":' in body and '    user: "${UID}:${GID}"' in body
+    assert "dockscreen allows that only with --allow-me" in out
     assert '"db"' not in body  # its image's own user was fine
 
 

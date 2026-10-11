@@ -24,7 +24,7 @@ def test_variables_that_are_the_shells_own_are_listed_per_service_without_their_
     ({"A": None}, {"A": "shell"}),
     ({"A": ""}, {"A": ""}),
     ({"B": "secret"}, {"A": "secret"}),   # interpolated under another name: not recognised
-    ({"DOCKSCREEN_UID": "1000"}, {"DOCKSCREEN_UID": "1000"}),
+    ({"UID": "1000"}, {"UID": "1000"}),   # dockscreen's own export
 ])
 def test_nothing_is_reported_for_these(environment, shell):
     assert shellenv.copied(config(web=environment), shell) == {}

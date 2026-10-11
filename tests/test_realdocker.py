@@ -1,6 +1,6 @@
 import os
 
-from dockscreen import realdocker
+from dockscreen import config, realdocker
 
 
 def make_docker(directory):
@@ -22,10 +22,12 @@ def test_skips_our_own_wrapper_even_through_a_symlink(tmp_path):
     assert realdocker.find(env, {os.path.realpath(wrapper)}) == str(real)
 
 
-def test_explicit_path_wins(tmp_path):
+def test_the_configured_path_wins(tmp_path):
     make_docker(tmp_path / "real")
-    env = {"DOCKSCREEN_DOCKER": "/opt/docker", "PATH": str(tmp_path / "real")}
-    assert realdocker.find(env, set()) == "/opt/docker"
+    env = {"PATH": str(tmp_path / "real")}
+    assert realdocker.choose(config.Config(docker="/opt/docker"), env, set()) == "/opt/docker"
+    assert realdocker.choose(config.Config(), env, set()) == str(tmp_path / "real" / "docker")
+    assert realdocker.choose(config.Config(), {"PATH": ""}, set()) == "docker"
 
 
 def test_current_directory_is_never_searched(tmp_path, monkeypatch):

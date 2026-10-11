@@ -6,20 +6,31 @@ import re
 import subprocess
 import sys
 
-from dockscreen import ids, policy, realdocker
+from dockscreen import config, idrules, imageuser, policy, realdocker
 from dockscreen.text import printable
 
 COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 COMPOSE_VARS_IN_ENV_FILE = re.compile(r"^\s*(export\s+)?COMPOSE_(FILE|PATH_SEPARATOR)\s*=", re.MULTILINE)
+# A directory that equals or contains one of these must not be mounted wholesale.
+SENSITIVE_DIRS = ("/", "/etc", "/usr", "/var", "/boot", "/root", "/run", "/proc", "/sys", "/dev")
+DOCKER_SOCKET = "/var/run/docker.sock"
 
 
-class GuardError(Exception):
+class ScreenError(Exception):
     """The config could not be inspected; treated as a refusal."""
 
 
 def inspect(global_args):
-    """Return (config, project_dir) for the config selected by global_args."""
+    """Return (config, project_dir) for the config selected by global_args.
+
+    A project directory that is, or contains, a sensitive path ($HOME, /etc, ...) is refused: everything
+    in it can be bind-mounted.
+    """
     project_dir = project_directory(global_args, os.environ, os.getcwd())
+    found = sensitive_inside(project_dir, os.environ)
+    if found:
+        raise ScreenError(f"the project directory {project_dir} contains {found[0]}; "
+                         "move the compose file into a directory of its own")
     return load_config(global_args), project_dir
 
 
@@ -28,27 +39,36 @@ def check(global_args, rules=policy.check_config):
     try:
         config, project_dir = inspect(global_args)
         return rules(config, context(project_dir))
-    except GuardError as e:
+    except ScreenError as e:
         return [str(e)]
 
 
-def context(project_dir):
-    """The policy context for project_dir, from dockscreen's own environment."""
-    uid, gid = ids.allowed(os.environ)
-    return policy.Context(project_dir, uid, gid, tuple(extra_mount_dirs(os.environ)))
+def context(project_dir, allow_me=False):
+    """The policy context for project_dir, from the config file; allow_me: --allow-me was given."""
+    rules = idrules.rules(imageuser.LocalIds(), allow_me)
+    return policy.Context(project_dir, rules, config.current().mount_dirs)
 
 
-def extra_mount_dirs(env):
-    """Directories from DOCKSCREEN_DIRS (pathsep-separated) that mounts may come from.
+def sensitive_paths(env):
+    """Paths whose directories must not be mountable: system directories, the home directory, the
+    config files and the docker socket."""
+    home = os.path.expanduser("~")
+    return [*SENSITIVE_DIRS, home, config.SYSTEM_FILE, config.user_file(env), DOCKER_SOCKET]
 
-    Read from dockscreen's own environment only: the project's .env file is not
-    visible here, so a compose project cannot widen its own allowance.
-    """
-    dirs = [d for d in env.get("DOCKSCREEN_DIRS", "").split(os.pathsep) if d]
-    for d in dirs:
-        if not os.path.isabs(d):
-            raise GuardError(f"DOCKSCREEN_DIRS entry {d!r} is not an absolute path")
-    return dirs
+
+def sensitive_inside(directory, env):
+    """The sensitive paths that directory equals or contains, compared after resolving symlinks."""
+    root = os.path.realpath(directory)
+    return [path for path in sensitive_paths(env) if policy.is_inside(os.path.realpath(path), root)]
+
+
+def mount_dir_warnings(env):
+    """One warning per configured mount dir that equals or contains a sensitive path."""
+    return [
+        f"warning: the configured mount dir {directory} contains {found[0]}, so containers can mount it"
+        for directory in config.current().mount_dirs
+        if (found := sensitive_inside(directory, env))
+    ]
 
 
 def passes(global_args, rules=policy.check_config):
@@ -73,13 +93,13 @@ def load_config(global_args):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except FileNotFoundError:
-        raise GuardError("'docker' not found in PATH")
+        raise ScreenError("'docker' not found in PATH")
     if result.returncode != 0:
-        raise GuardError(f"docker compose config failed:\n{result.stderr.strip()}")
+        raise ScreenError(f"docker compose config failed:\n{result.stderr.strip()}")
     try:
         return json.loads(result.stdout)
     except ValueError as e:
-        raise GuardError(f"cannot parse docker compose config output: {e}")
+        raise ScreenError(f"cannot parse docker compose config output: {e}")
 
 
 REMOTE_MESSAGE = "the daemon is not the default local one; ids and paths cannot be checked"
@@ -109,25 +129,38 @@ def project_directory(global_args, env, cwd):
     if not files and env.get("COMPOSE_FILE"):
         files = env["COMPOSE_FILE"].split(env.get("COMPOSE_PATH_SEPARATOR", os.pathsep))
     if "-" in files:
-        raise GuardError("a compose file read from stdin cannot be inspected")
+        raise ScreenError("a compose file read from stdin cannot be inspected")
     if files:
         return os.path.realpath(os.path.dirname(os.path.join(cwd, files[0])))
 
     return find_compose_dir(cwd, option_values(global_args, "--env-file", None))
 
 
-def find_compose_dir(start, env_files=()):
-    """Walk up like compose does, refusing if a .env could redirect compose elsewhere."""
+def find_compose_dir(start, env_files=(), home=None, uid=None):
+    """Walk up like compose does, refusing if a .env could redirect compose elsewhere.
+
+    The walk stops at the home directory and at the first directory not owned by uid: a compose file
+    found there was not put there for this project, and is an error. The starting directory is the
+    caller's own choice and is not subject to the ownership rule.
+    """
+    home = os.path.realpath(home or os.path.expanduser("~"))
+    uid = os.getuid() if uid is None else uid
     for env_file in env_files:
         refuse_compose_vars_in(os.path.join(start, env_file))
     directory = os.path.realpath(start)
     while True:
+        has_file = any(os.path.exists(os.path.join(directory, n)) for n in COMPOSE_FILE_NAMES)
+        if directory != os.path.realpath(start) and (directory == home or os.stat(directory).st_uid != uid):
+            if has_file:
+                raise ScreenError(f"the nearest compose file is in {directory}, which is your home directory "
+                                 "or not yours; run from the project directory or use -f")
+            raise ScreenError("no compose file found")
         refuse_compose_vars_in(os.path.join(directory, ".env"))
-        if any(os.path.exists(os.path.join(directory, n)) for n in COMPOSE_FILE_NAMES):
+        if has_file:
             return directory
         parent = os.path.dirname(directory)
         if parent == directory:
-            raise GuardError("no compose file found")
+            raise ScreenError("no compose file found")
         directory = parent
 
 
@@ -140,7 +173,7 @@ def refuse_compose_vars_in(path):
     except OSError:
         return
     if COMPOSE_VARS_IN_ENV_FILE.search(content):
-        raise GuardError(f"{path} sets COMPOSE_FILE or COMPOSE_PATH_SEPARATOR; "
+        raise ScreenError(f"{path} sets COMPOSE_FILE or COMPOSE_PATH_SEPARATOR; "
                          "set it in your shell or use -f, so the project directory can be verified")
 
 

@@ -1,14 +1,13 @@
 import copy
-import os
 import subprocess
 
 import pytest
-from fakes import FakeImages, Local, make_tools
+from fakes import FakeImages, make_tools, rules
 
 from dockscreen import autofix, composeimages, gate, policy
+from dockscreen import config as configuration
 from dockscreen.dockerclient import DockerError
 
-UID, GID = os.getuid(), os.getgid()
 NOBODY = "65534:65534"
 COMMAND = ["docker", "compose", "-f", "/gen/compose-0.yaml"]  # what prepare is given; only the tail matters
 
@@ -19,9 +18,16 @@ def project(**services):
         name: {"image": f"{name}:1", **fields} for name, fields in (services or {"web": {}}).items()}}
 
 
-def prepare(config, images, args=(), active=("web",), codes=None):
-    tools, recorder = make_tools(images, active=active, codes=codes, reads=lambda _: config)
-    return composeimages.prepare(COMMAND, config, list(args), tools), recorder, images
+def prepare(config, images, args=(), active=("web",), codes=None, settings=None, chosen=frozenset()):
+    gate_ctx = gate_context(images, settings)
+    tools, recorder = make_tools(images, active=active, codes=codes, reads=lambda _: config,
+                                 gate_ctx=gate_ctx)
+    return composeimages.prepare(COMMAND, config, list(args), tools, chosen), recorder, images
+
+
+def gate_context(images, settings=None):
+    settings = settings or configuration.Config()
+    return gate.Context(images, rules(settings=settings), settings)
 
 
 def subcommands(recorder):
@@ -167,7 +173,7 @@ def test_the_images_own_user_is_judged_as_docker_run_does(image_user, kind):
 def test_refusals_say_what_to_do():
     prepared, _, _ = prepare(project(), FakeImages(users={"web:1": "web"}))
     assert len(prepared.problems) == 1  # one line per service, however many ids are the problem
-    assert "service web: image web:1: the image would run with uid 1000" in prepared.problems[0]
+    assert "service web: image web:1: the image's uid 1000 exists on this host" in prepared.problems[0]
     assert "gid 1000" in prepared.problems[0]
     assert prepared.problems[0].endswith("set user: to choose one")
 
@@ -202,12 +208,12 @@ def test_inspection_errors_are_refusals_and_the_container_is_still_removed():
 
 # --- the config that runs ---------------------------------------------------------
 
-def decided(config, images, active=("web",), **kwargs):
-    prepared, _, _ = prepare(config, images, active=active, **kwargs)
-    return prepared, *composeimages.finalize(config, prepared)
+def decided(config, images, active=("web",), settings=None, **kwargs):
+    prepared, _, _ = prepare(config, images, active=active, settings=settings, **kwargs)
+    return prepared, *composeimages.finalize(config, prepared, gate_context(images, settings))
 
 
-def test_root_images_run_as_nobody_and_acceptable_ones_keep_their_own_user():
+def test_root_images_run_as_the_default_user_and_acceptable_ones_keep_their_own():
     config = project(web={}, db={}, user_set={"user": "7:7"})
     images = FakeImages(users={"web:1": "", "db:1": "app", "user_set:1": ""})
 
@@ -232,7 +238,7 @@ def test_looked_at_images_are_pinned_in_the_generated_config_only():
     assert config == original                                # the input is untouched
 
 
-def test_a_service_that_is_not_started_falls_back_to_nobody_in_case_it_is():
+def test_a_service_that_is_not_started_runs_as_the_default_user_in_case_it_is():
     config = project(web={}, debug={})
     _, final, vetted = decided(config, FakeImages(users={"web:1": "app"}), active=("web",))
     assert final["services"]["debug"]["user"] == NOBODY
@@ -246,44 +252,46 @@ def test_the_final_config_passes_the_policy_with_exactly_the_vetted_services():
         config["services"][name].update(cap_drop=["ALL"], security_opt=["no-new-privileges:true"])
     _, final, vetted = decided(config, FakeImages(users={"web:1": "", "db:1": "app"}),
                                active=("web", "db"))
-    ctx = policy.Context("/p", UID, GID)
+    ctx = policy.Context("/p", rules())
 
     assert policy.check_config(final, ctx._replace(vetted=vetted)) == []
-    # without the vetting the service that kept its image's user is not acceptable
+    # the vetting is what lets a configured user pass that the rules alone would refuse
+    settings = configuration.Config(image_users={"docker.io/library/db": (1000, 1000)})
+    images = FakeImages(users={"db:1": ""}, digests={"db:1": ["db@sha256:x"]})
+    _, final, vetted = decided(config, images, active=("db",), settings=settings)
+    assert final["services"]["db"]["user"] == "1000:1000" and "db" in vetted
+    assert policy.check_config(final, ctx._replace(vetted=vetted)) == []
     assert [p for p in policy.check_config(final, ctx) if p.startswith("service db: user")] == [
-        "service db: user '100000' is neither the allowed id nor 65534 (nobody)"]
+        "service db: user '1000:1000': uid 1000 exists on this host (local user daniel)",
+        "service db: user '1000:1000': gid 1000 exists on this host (local group daniel)"]
 
 
 def test_descriptions_and_notices():
     config = project(web={}, db={}, debug={}, set_={"user": "1:1"})
     images = FakeImages(users={"web:1": "", "db:1": "app"})
     prepared, _, _ = prepare(config, images, active=("web", "db", "set_"))
+    ctx = gate_context(images)
 
-    assert composeimages.describe(config, prepared) == [
-        "service db: no user set; image db:1 runs as uid 100000, gid 100001; accepted",
+    assert composeimages.describe(config, prepared, ctx) == [
+        ("service db: no user set; image db:1 runs as uid 100000 (no local user), gid 100001 "
+         "(no local group); accepted"),
         ("service debug: no user set and not started by default; "
-         "dockscreen runs it as nobody (65534:65534) if it is started"),
-        "service web: no user set; image web:1 would run as root; dockscreen runs it as nobody (65534:65534)",
+         "dockscreen runs it as the default user (65534:65534) if it is started"),
+        ("service web: no user set; image web:1 would run as root; dockscreen runs it as the default user "
+         "(65534:65534)"),
     ]
-    assert composeimages.notices(prepared) == [
-        "service web: image web:1 would run as root; dockscreen runs it as nobody (65534:65534)"]
+    assert composeimages.notices(prepared, ctx) == [
+        "service web: image web:1 would run as root; dockscreen runs it as the default user (65534:65534)"]
 
 
-def test_the_audit_says_which_local_accounts_an_images_ids_are():
-    config = project(web={})
-    prepared, _, _ = prepare(config, FakeImages(users={"web:1": "app"}))
-    line = composeimages.describe(config, prepared, Local())[0]
-    assert line == ("service web: no user set; image web:1 runs as uid 100000 (no local user), "
-                    "gid 100001 (no local group); accepted")
-    # a refusal names the local account that the image's id would be
-    refused, _, _ = prepare(config, FakeImages(users={"web:1": "web"}))
+def test_a_refusal_names_the_local_account_that_the_images_id_would_be():
+    refused, _, _ = prepare(project(web={}), FakeImages(users={"web:1": "web"}))
     assert refused.problems == [
-        ("service web: image web:1: the image would run with uid 1000, which exists on this host "
-         "(local user daniel); the image would run with gid 1000, which exists on this host "
-         "(local group daniel); set user: to choose one")]
+        ("service web: image web:1: the image's uid 1000 exists on this host (local user daniel); "
+         "the image's gid 1000 exists on this host (local group daniel); set user: to choose one")]
 
 
-# --- services with mounts: the user must be chosen explicitly ------------------------
+# --- services with mounts ----------------------------------------------------------
 
 BIND = {"volumes": [{"type": "bind", "source": "/p/data", "target": "/data"}]}
 
@@ -300,29 +308,13 @@ BIND = {"volumes": [{"type": "bind", "source": "/p/data", "target": "/data"}]}
     ({"volumes": ["/short/syntax:/not-normalized"]}, False),  # config output is always the long form
 ])
 def test_which_services_reach_host_files(fields, mounts):
-    assert composeimages.has_host_mounts(fields) is mounts
+    assert policy.has_host_mounts(fields) is mounts
 
 
-def test_a_service_with_mounts_runs_as_nobody_and_the_images_ids_are_echoed_in_compose_terms():
-    config = project(web=BIND)
-    prepared, _, _ = prepare(config, FakeImages(users={"web:1": "app"}))
-
-    decision = prepared.decisions["web"]
-    assert decision.assessment.kind == "fallback" and decision.assessment.reason == "mounts"
-    assert prepared.problems == []
-    assert composeimages.describe(config, prepared) == [
-        ("service web: no user set; image web:1 would run as uid 100000, gid 100001, and the service has "
-         "bind mounts; dockscreen runs it as nobody (65534:65534). To run it as the image's user, set user: "
-         '"${DOCKSCREEN_UID}:${DOCKSCREEN_GID}" and run with DOCKSCREEN_UID=100000 DOCKSCREEN_GID=100001')]
-    notice = composeimages.notices(prepared)[0]
-    assert notice.startswith("service web: image web:1 would run as uid 100000")
-    assert notice.endswith("run with DOCKSCREEN_UID=100000 DOCKSCREEN_GID=100001")
-
-
-def test_mounts_make_a_host_account_id_a_fallback_not_a_refusal():
-    prepared, _, _ = prepare(project(web=BIND), FakeImages(users={"web:1": "web"}))  # uid 1000 is daniel
-    assert prepared.problems == []
-    assert prepared.decisions["web"].assessment.reason == "mounts"
+def test_with_mounts_an_image_user_outside_the_nobody_range_is_refused():
+    prepared, _, _ = prepare(project(web=BIND), FakeImages(users={"web:1": "app"}))
+    assert prepared.decisions["web"].assessment.kind == "refused"
+    assert "the image's uid 100000 is not in the nobody range 65530-65534" in prepared.problems[0]
 
 
 def test_without_mounts_a_low_unknown_id_is_accepted_and_with_mounts_it_is_not():
@@ -330,29 +322,68 @@ def test_without_mounts_a_low_unknown_id_is_accepted_and_with_mounts_it_is_not()
     plain, _, _ = prepare(project(web={}), images)
     mounted, _, _ = prepare(project(web=BIND), images)
     assert plain.decisions["web"].assessment.kind == "ok"
-    assert mounted.decisions["web"].assessment.kind == "fallback"
+    assert mounted.decisions["web"].assessment.kind == "refused"
 
 
-def test_finalize_runs_a_mounting_service_as_nobody_in_the_generated_file():
-    config = project(web=BIND, db={})
-    images = FakeImages(users={"web:1": "app", "db:1": "app"})
-    _, final, vetted = decided(config, images, active=("web", "db"))
+def test_with_mounts_a_root_image_still_runs_as_the_default_user():
+    config = project(web=BIND)
+    _, final, _ = decided(config, FakeImages(users={"web:1": ""}))
     assert final["services"]["web"]["user"] == NOBODY
-    # no mounts: the image's own user stays, as numbers
-    assert final["services"]["db"]["user"] == "100000:100001" and vetted == {"db"}
+
+
+# --- users the config file sets ----------------------------------------------------
+
+MARIADB = configuration.Config(image_users={"docker.io/library/mariadb": (999, 999)})
+
+
+def mariadb_project(**fields):
+    return {"name": "proj", "services": {"db": {"image": "mariadb:11", **fields}}}
+
+
+def test_a_configured_user_applies_to_an_image_pulled_from_that_repository():
+    images = FakeImages(users={"mariadb:11": ""}, digests={"mariadb:11": ["mariadb@sha256:abc"]})
+    prepared, final, vetted = decided(mariadb_project(**BIND), images, active=("db",), settings=MARIADB)
+
+    assert prepared.decisions["db"].assessment.kind == "configured"
+    assert final["services"]["db"]["user"] == "999:999" and vetted == {"db"}
+    assert composeimages.notices(prepared, gate_context(images, MARIADB)) == []  # configured: no notice
+    assert composeimages.describe(mariadb_project(), prepared, gate_context(images, MARIADB)) == [
+        "service db: no user set; image mariadb:11 runs as 999:999, the user the config file sets for it"]
+
+
+@pytest.mark.parametrize("fields, digests, why", [
+    ({}, [], "this image was not pulled from there"),                     # tagged locally
+    ({}, ["evil.example/mariadb@sha256:abc"], "this image was not pulled from there"),
+    ({"build": {"context": "."}}, ["mariadb@sha256:abc"], "the service builds its image"),
+])
+def test_a_configured_user_does_not_apply_to_an_image_that_only_has_the_name(fields, digests, why):
+    images = FakeImages(users={"mariadb:11": ""}, digests={"mariadb:11": digests})
+    config = mariadb_project(**fields)
+    prepared, _, _ = prepare(config, images, active=("db",), settings=MARIADB)
+
+    assessment = prepared.decisions["db"].assessment
+    assert assessment.kind == "fallback"  # the normal rules: root runs as the default user
+    lines = composeimages.describe(config, prepared, gate_context(images, MARIADB))
+    assert lines[-1] == f"service db: note: the config sets a user for docker.io/library/mariadb, but {why}"
+
+
+def test_services_whose_user_the_command_line_chooses_are_not_decided():
+    images = FakeImages(users={"web:1": "web"})  # would be refused
+    prepared, _, _ = prepare(project(), images, chosen=frozenset({"web"}))
+    assert prepared.problems == [] and prepared.decisions == {}
 
 
 def test_the_vetting_belongs_to_dockscreen_not_to_the_project():
     # No key in a compose file can mark a service as vetted: it lives in the Context only.
     config = project(web={"x-vetted": True, "vetted": True})
-    problems = policy.check_config(config, policy.Context("/p", UID, GID))
+    problems = policy.check_config(config, policy.Context("/p", rules()))
     assert "service web: key 'vetted' is not on the allow list" in problems
     assert "service web: user is not set, the image default may be root" in problems
 
 
 def test_autofix_leaves_a_vetted_unset_user_alone_and_fixes_the_rest():
     config = project(web={}, db={})
-    ctx = policy.Context("/p", UID, GID, vetted=frozenset({"web"}))
+    ctx = policy.Context("/p", rules(), vetted=frozenset({"web"}))
     fixed = autofix.fix_config(config, ctx)
     assert "user" not in fixed["services"]["web"]
     assert fixed["services"]["db"]["user"] == autofix.USER_TEMPLATE

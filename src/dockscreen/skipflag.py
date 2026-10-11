@@ -1,4 +1,4 @@
-"""--skip-security-gate: run the real thing with no checks and no defaults.
+"""--skip-screening: run the real thing with no checks and no defaults.
 
 A global option only, in front of the subcommand. After the subcommand it is
 not recognised, so docker or compose rejects it, which is the safe direction.
@@ -8,11 +8,14 @@ have been copied into a script or an alias.
 
 import sys
 
-FLAG = "--skip-security-gate"
+FLAG = "--skip-screening"
 
 
-def strip(argv, value_opts):
-    """(whether the flag was given, argv without it). Only options before the subcommand count."""
+def strip(argv, value_opts, flag=FLAG):
+    """(whether flag was given, argv without it). Only options before the subcommand count.
+
+    Also used for the other dockscreen options that go before the subcommand, such as --allow-me.
+    """
     kept = []
     found = False
     i = 0
@@ -20,7 +23,7 @@ def strip(argv, value_opts):
         token = argv[i]
         if token == "--":
             break
-        if token == FLAG:
+        if token == flag:
             found = True
             i += 1
         elif token in value_opts:
@@ -35,6 +38,6 @@ def strip(argv, value_opts):
 
 
 def banner():
-    print(f"dockscreen: warning: {FLAG} given: the security gate is disabled.", file=sys.stderr)
+    print(f"dockscreen: warning: {FLAG} given: screening is disabled.", file=sys.stderr)
     print("dockscreen: warning: nothing in this command is checked, and no defaults are added.",
           file=sys.stderr)

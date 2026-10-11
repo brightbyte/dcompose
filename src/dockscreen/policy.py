@@ -9,8 +9,7 @@ everywhere except in `build` (see check_build).
 
 A key is listed either as harmless (any value is fine) or as checked (it has an
 entry in SERVICE_CHECKS that validates the value). Checks take the value and a
-Context, whose uid/gid are the ids containers may run as (ids.allowed), which
-need not be the real user's.
+Context, whose rules (idrules.Rules) decide which uids and gids the project may choose.
 
 Every check returns a list of human-readable problems; an empty list means the
 config is acceptable. Nothing here touches docker, only the filesystem for
@@ -20,7 +19,7 @@ realpath resolution.
 import os
 from typing import NamedTuple
 
-NOBODY = 65534
+from dockscreen import idrules
 
 NO_NEW_PRIVILEGES = frozenset({"no-new-privileges", "no-new-privileges:true", "no-new-privileges=true"})
 # A tuple: the order of the checks is the order of the problems reported.
@@ -83,14 +82,15 @@ HOOK_KEYS = frozenset({"command", "user", "privileged", "working_dir", "environm
 
 
 class Context(NamedTuple):
-    """What the policy allows: the project, the ids containers may run as, extra mount sources."""
+    """What the policy allows: the project, the ids the project may choose, extra mount sources."""
     project_dir: str
-    uid: int
-    gid: int
-    extra_dirs: tuple = ()  # DOCKSCREEN_DIRS
+    ids: idrules.Rules
+    extra_dirs: tuple = ()  # mount_dirs from the config file
     # Services whose unset `user` is acceptable because their image was looked at and would
     # run as an acceptable user (see composeimages). Only dockscreen sets this, never the project.
     vetted: frozenset = frozenset()
+    # Whether the service being checked reaches host files (has_host_mounts); set per service.
+    mounts: bool = False
 
     @property
     def mount_roots(self):
@@ -132,6 +132,7 @@ def unknown_keys(mapping, allowed, what, extensions=True):
 
 def check_service(service, ctx, vetted=False):
     problems = unknown_keys(service, HARMLESS_SERVICE_KEYS | SERVICE_CHECKS.keys(), "key")
+    ctx = ctx._replace(mounts=has_host_mounts(service))
     for key, check in SERVICE_CHECKS.items():
         if key == "user" and vetted:
             continue
@@ -142,45 +143,50 @@ def check_service(service, ctx, vetted=False):
 
 # --- users and privileges -------------------------------------------------
 
-def allowed_ids(own):
-    return {own, NOBODY}
+def has_host_mounts(service):
+    """Whether the service reaches host files: bind mounts, secrets and configs (bind-mounted files),
+    devices, or the volumes of another container."""
+    binds = any(isinstance(m, dict) and m.get("type") == "bind" for m in service.get("volumes") or [])
+    others = ("volumes_from", "devices", "secrets", "configs")
+    return binds or any(service.get(key) for key in others)
 
 
 def parse_id(value):
-    """The numeric id, or None. Names are not accepted: the image's /etc/passwd resolves them,
-    and a crafted image can map any name to uid 0."""
+    """The numeric id, or None."""
     text = str(value)
     return int(text) if text.isascii() and text.isdigit() else None
 
 
-def check_id(kind, value, allowed):
-    number = parse_id(value)
-    if number is None:
-        return [(f"{kind} {value!r} is not numeric; use an id (names are resolved by the image, which can "
-                 "map them to root; only nobody and root are resolved by dockscreen, in `user:`)")]
-    if number not in allowed:
-        return [f"{kind} {value!r} is neither the allowed id nor {NOBODY} (nobody)"]
-    return []
+def not_a_name(kind, value):
+    """For a name that is still a name: hardening resolves every name that exists on this host."""
+    return (f"{kind} {value!r} does not exist on this host (names are resolved on this host, "
+            "never in the image)")
 
 
 def check_user(value, ctx):
+    """A `user:` as hardening left it: `uid:gid`, with names already resolved on this host."""
     if not value:
         return ["user is not set, the image default may be root"]
-
-    # A bare uid gets gid 0 when the image has no passwd entry for it.
-    uid_part, has_gid, gid_part = str(value).partition(":")
-    problems = check_id("user", uid_part, allowed_ids(ctx.uid))
-    if has_gid:
-        problems += check_id("group", gid_part, allowed_ids(ctx.gid))
-    else:
-        problems.append(f"user {value!r} has no group, use uid:gid")
-    return problems
+    user, has_group, group = str(value).partition(":")
+    uid, gid = parse_id(user), parse_id(group)
+    if uid is None:
+        return [not_a_name("user", user)]
+    if not has_group:
+        # docker would take the group, and supplementary groups, from the image
+        return [f"user {value!r} has no group, use uid:gid"]
+    if gid is None:
+        return [not_a_name("group", group)]
+    return [f"user {value!r}: {p}" for p in ctx.ids.problems(uid, gid, mounts=ctx.mounts)]
 
 
 def check_group_add(value, ctx):
     problems = []
     for extra in value or []:
-        problems += check_id("group_add", extra, allowed_ids(ctx.gid))
+        gid = parse_id(extra)
+        if gid is None:
+            problems.append(not_a_name("group_add", extra))
+        elif problem := ctx.ids.problem("gid", gid, ctx.mounts):
+            problems.append(f"group_add {extra!r}: {problem}")
     return problems
 
 
@@ -428,7 +434,7 @@ def check_file_source(item, ctx):
 
 def roots_text(mount_roots):
     project_dir, *extra = mount_roots
-    return f"{project_dir}" + (" and DOCKSCREEN_DIRS" if extra else "")
+    return f"{project_dir}" + (" and the configured mount_dirs" if extra else "")
 
 
 def is_inside_any(path, roots):

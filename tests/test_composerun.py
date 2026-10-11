@@ -3,21 +3,21 @@ import os
 import pytest
 from fakes import FakeImages, make_tools, read_raw
 
-from dockscreen import composerun, guard
+from dockscreen import composerun, hostusers, screen
 
 UID, GID = os.getuid(), os.getgid()
 
 
 def project_config(**service):
-    return {"name": "proj", "services": {"web": {"image": "x:1", "user": f"{UID}:{GID}", **service}}}
+    return {"name": "proj", "services": {"web": {"image": "x:1", "user": "65534:65534", **service}}}
 
 
 def inspect_as(monkeypatch, tmp_path, config):
-    monkeypatch.setattr(guard, "inspect", lambda global_args: (config, str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args: (config, str(tmp_path)))
 
 
-def up(argv, idx, tools):
-    return composerun.run(argv, idx, tools)
+def up(argv, idx, tools, allow_me=False):
+    return composerun.run(argv, idx, tools, allow_me=allow_me)
 
 
 def last(recorder):
@@ -76,8 +76,8 @@ def test_what_is_checked_is_what_runs(monkeypatch, tmp_path):
 
 def test_inspection_failure_and_missing_project_name_are_refusals(monkeypatch, tmp_path, capsys):
     def boom(global_args):
-        raise guard.GuardError("no compose file found")
-    monkeypatch.setattr(guard, "inspect", boom)
+        raise screen.ScreenError("no compose file found")
+    monkeypatch.setattr(screen, "inspect", boom)
     tools, recorder = make_tools()
     assert up(["up"], 0, tools) == 1
     assert "no compose file found" in capsys.readouterr().err
@@ -90,15 +90,56 @@ def test_inspection_failure_and_missing_project_name_are_refusals(monkeypatch, t
     assert recorder.children == []
 
 
-def test_a_bad_id_range_is_a_refusal(monkeypatch, tmp_path, capsys):
-    inspect_as(monkeypatch, tmp_path, project_config())
+def test_the_callers_own_ids_need_allow_me(monkeypatch, tmp_path, capsys):
+    inspect_as(monkeypatch, tmp_path, project_config(user=f"{UID}:{GID}"))
+    tools, recorder = make_tools(FakeImages(users={"x:1": "app"}))
 
-    def bad_range():
-        raise ValueError("DOCKSCREEN_ID_RANGE='nonsense' is not of the form low-high")
-    monkeypatch.setattr(composerun, "default_tools", bad_range)
+    assert up(["up"], 0, tools) == 1
+    assert f"uid {UID} is yours; pass --allow-me to allow it" in capsys.readouterr().err
+    assert recorder.children == []
 
-    assert composerun.run(["up"], 0) == 1
-    assert "DOCKSCREEN_ID_RANGE" in capsys.readouterr().err
+    assert up(["up"], 0, tools, allow_me=True) == 0
+    assert last(recorder)[1]["services"]["web"]["user"] == f"{UID}:{GID}"
+
+
+def test_run_with_a_user_on_the_command_line_skips_deciding_that_services_image(
+        monkeypatch, tmp_path, capsys):
+    config = no_user()
+    inspect_as(monkeypatch, tmp_path, config)
+    tools, recorder = make_tools(FakeImages(users={"x:1": "web"}))  # uid 1000: would be refused
+
+    assert up(["run", "--rm", "-u", "1000:1000", "web", "sh"], 0, tools) == 0
+    assert last(recorder)[0][-6:] == ["run", "--rm", "-u", "1000:1000", "web", "sh"]
+
+
+def test_run_as_a_local_user_reaches_compose_as_numeric_ids(monkeypatch, tmp_path, capsys):
+    inspect_as(monkeypatch, tmp_path, no_user())
+    monkeypatch.setattr(hostusers, "resolve_account",
+                        lambda name: ("1000:1000", [f"Resolving user {name} to uid 1000, gid 1000"]))
+    tools, recorder = make_tools(FakeImages(users={"x:1": "web"}))  # uid 1000: would be refused
+
+    assert up(["run", "--as", "alice", "web", "sh"], 0, tools) == 0
+    assert last(recorder)[0][-4:] == ["run", "--user=1000:1000", "web", "sh"]
+    assert "Resolving user alice" in capsys.readouterr().err
+
+
+def test_run_as_me_reaches_compose_as_the_callers_ids(monkeypatch, tmp_path):
+    inspect_as(monkeypatch, tmp_path, no_user())
+    tools, recorder = make_tools(FakeImages(users={"x:1": "web"}))
+
+    assert up(["run", "--as-me", "web", "sh"], 0, tools) == 0
+    assert last(recorder)[0][-4:] == ["run", f"--user={os.getuid()}:{os.getgid()}", "web", "sh"]
+
+
+@pytest.mark.parametrize("args, message", [
+    (["run", "-u", "postgres", "web"], "--user takes numeric ids as uid:gid, not 'postgres'"),
+    (["run", "--user=1000", "web"], "give the group too"),
+])
+def test_run_takes_numeric_users_only(monkeypatch, tmp_path, capsys, args, message):
+    inspect_as(monkeypatch, tmp_path, no_user())
+    tools, recorder = make_tools(FakeImages(users={"x:1": "app"}))
+    assert up(args, 0, tools) == 1
+    assert message in capsys.readouterr().err and recorder.children == []
 
 
 def test_no_defaults_notice_when_nothing_was_added(monkeypatch, tmp_path, capsys):
@@ -117,7 +158,7 @@ def no_user(**fields):
     return config
 
 
-def test_a_root_image_runs_as_nobody_with_the_image_pinned_in_the_generated_file(
+def test_a_root_image_runs_as_the_default_user_with_the_image_pinned_in_the_generated_file(
         monkeypatch, tmp_path, capsys):
     inspect_as(monkeypatch, tmp_path, no_user(pull_policy="always"))
     tools, recorder = make_tools(FakeImages(users={"x:1": ""}), codes={"up": 3})
@@ -130,8 +171,8 @@ def test_a_root_image_runs_as_nobody_with_the_image_pinned_in_the_generated_file
     assert web["pull_policy"] == "never"
     pulled = [cmd[-2:] for cmd in recorder.children if "pull" in cmd]
     assert pulled == [["pull", "web"]]    # the project's policy (always) was applied first
-    assert "service web: image x:1 would run as root; dockscreen runs it as nobody (65534:65534)" in (
-        capsys.readouterr().err)
+    assert ("service web: image x:1 would run as root; dockscreen runs it as the default user "
+            "(65534:65534)") in capsys.readouterr().err
 
 
 def test_images_are_acquired_from_a_config_that_still_has_the_projects_pull_policy(monkeypatch, tmp_path):
@@ -153,7 +194,7 @@ def test_an_acceptable_image_user_is_kept_but_pinned_as_numbers(monkeypatch, tmp
 
     web = last(recorder)[1]["services"]["web"]
     assert web["user"] == "100000:100001" and web["pull_policy"] == "never"
-    assert "nobody" not in capsys.readouterr().err
+    assert "default user" not in capsys.readouterr().err
 
 
 def test_an_image_that_chose_a_low_user_is_refused_before_anything_runs(monkeypatch, tmp_path, capsys):
@@ -162,7 +203,7 @@ def test_an_image_that_chose_a_low_user_is_refused_before_anything_runs(monkeypa
 
     assert up(["up"], 0, tools) == 1
 
-    assert "service web: image x:1: the image would run with uid 1000" in capsys.readouterr().err
+    assert "service web: image x:1: the image's uid 1000 exists on this host" in capsys.readouterr().err
     assert all("up" not in cmd for cmd in recorder.children)
 
 
@@ -174,7 +215,7 @@ def test_failing_to_pull_stops_the_run(monkeypatch, tmp_path, capsys):
     assert [cmd[-2:] for cmd in recorder.children] == [["pull", "web"]]
 
 
-def test_a_service_that_is_not_started_gets_nobody_as_a_fail_safe(monkeypatch, tmp_path):
+def test_a_service_that_is_not_started_gets_the_default_user_as_a_fail_safe(monkeypatch, tmp_path):
     config = no_user()
     config["services"]["debug"] = {
         "image": "d:1", "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"]}
@@ -196,7 +237,7 @@ def test_a_service_that_is_not_started_gets_nobody_as_a_fail_safe(monkeypatch, t
     ([], []),
 ])
 def test_strip_options(args, kept):
-    assert guard.strip_options(args, composerun.REPLACED_OPTIONS) == kept
+    assert screen.strip_options(args, composerun.REPLACED_OPTIONS) == kept
 
 
 def test_run_child_exit_codes_and_signals():

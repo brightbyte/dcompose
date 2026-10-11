@@ -1,18 +1,13 @@
 import os
 
 import pytest
+from fakes import rules
 
 from dockscreen import autofix, policy
 
-UID = os.getuid()
-GID = os.getgid()
-OWN = f"{UID}:{GID}"
-
-# The disallowed-user cases assume the current user is neither root nor nobody.
-pytestmark = pytest.mark.skipif(
-    UID in (0, policy.NOBODY) or GID in (0, policy.NOBODY),
-    reason="current user must be neither root nor nobody",
-)
+# The caller is 4242:4343, and --allow-me is given unless a test says otherwise (see fakes.Local
+# for the rest of the host).
+OWN = "4242:4343"
 
 
 @pytest.fixture
@@ -31,16 +26,16 @@ def service(**overrides):
     return {"user": OWN, "security_opt": ["no-new-privileges:true"], "cap_drop": ["ALL"], **overrides}
 
 
-def context(project, extra_dirs=()):
-    return policy.Context(str(project), UID, GID, tuple(str(d) for d in extra_dirs))
+def context(project, extra_dirs=(), allow_me=True):
+    return policy.Context(str(project), rules(allow_me=allow_me), tuple(str(d) for d in extra_dirs))
 
 
-def check(project, config, extra_dirs=()):
-    return policy.check_config({"name": "proj", **config}, context(project, extra_dirs))
+def check(project, config, extra_dirs=(), allow_me=True):
+    return policy.check_config({"name": "proj", **config}, context(project, extra_dirs, allow_me))
 
 
-def problems_for(project, **overrides):
-    return check(project, {"services": {"web": service(**overrides)}})
+def problems_for(project, allow_me=True, **overrides):
+    return check(project, {"services": {"web": service(**overrides)}}, allow_me=allow_me)
 
 
 def assert_refused(problems, *reasons):
@@ -111,7 +106,10 @@ def test_every_checked_key_is_outside_the_harmless_list():
 
 # --- users ----------------------------------------------------------------
 
-@pytest.mark.parametrize("user", [OWN, "65534:65534", f"{UID}:65534", f"{UID:08d}:{GID}"])
+@pytest.mark.parametrize("user", [
+    OWN, "65534:65534", "65530:65531", "4242:65534", "00004242:4343",
+    "5000:5000",  # not root, not an account here, and no mounts
+])
 def test_allowed_users(project, user):
     assert problems_for(project, user=user) == []
 
@@ -119,26 +117,50 @@ def test_allowed_users(project, user):
 @pytest.mark.parametrize("user, reasons", [
     (None, ["user is not set"]),
     ("", ["user is not set"]),
-    ("root", ["user 'root' is not numeric", "user 'root' has no group"]),
-    ("0:0", ["user '0' is neither", "group '0' is neither"]),
-    (str(UID), [f"user '{UID}' has no group"]),
-    (f"{UID}:0", ["group '0' is neither"]),
-    (f"0:{GID}", ["user '0' is neither"]),
-    (f"{UID + 1}:{GID}", [f"user '{UID + 1}' is neither"]),
-    # names resolve through the image, which can map them to root
-    ("nobody", ["user 'nobody' is not numeric", "user 'nobody' has no group"]),
-    ("nobody:nogroup", ["user 'nobody' is not numeric", "group 'nogroup' is not numeric"]),
-    (f"{UID}:nogroup", ["group 'nogroup' is not numeric"]),
-    (f"{UID}:{GID}x", [f"group '{GID}x' is not numeric"]),
+    # names are resolved by hardening; one that is still a name does not exist on this host
+    ("app", ["user 'app' does not exist on this host"]),
+    ("4242:nogroup", ["group 'nogroup' does not exist on this host"]),
+    ("0:0", ["uid 0 is root", "gid 0 is root"]),
+    ("4242", ["user '4242' has no group"]),
+    ("4242:0", ["gid 0 is root"]),
+    ("1000:1000", ["uid 1000 exists on this host (local user daniel)", "gid 1000 exists on this host"]),
+    ("999:999", ["gid 999 exists on this host (local group docker)"]),
+    ("65535:65535", ['uid 65535 means "no id"', 'gid 65535 means "no id"']),
 ])
 def test_disallowed_users(project, user, reasons):
     assert_refused(problems_for(project, user=user), *reasons)
 
 
+def test_the_callers_own_ids_need_allow_me(project):
+    assert_refused(problems_for(project, allow_me=False, user=OWN),
+                   "uid 4242 is yours; pass --allow-me", "gid 4343 is yours; pass --allow-me")
+
+
+def test_with_host_mounts_only_allowed_ids_pass(project):
+    mounts = {"volumes": [{"type": "bind", "source": "./data", "target": "/d"}]}
+    assert_refused(problems_for(project, user="5000:5000", **mounts),
+                   "uid 5000 is not in the nobody range 65530-65534, and there are host mounts",
+                   "gid 5000 is not in the nobody range")
+    assert problems_for(project, user="65534:65534", **mounts) == []
+    assert problems_for(project, user=OWN, **mounts) == []  # --allow-me: the caller's own ids
+    assert problems_for(project, user="5000:5000", secrets=["s"]) != []  # a secret is a mounted host file
+
+
+def test_subordinate_ids_are_refused(project):
+    class Subordinate:
+        def contains(self, kind, value):
+            return 100000 <= value < 165536
+
+    ctx = policy.Context(str(project), rules(subordinate=Subordinate()))
+    problems = policy.check_config({"name": "proj", "services": {"web": service(user="100000:5000")}}, ctx)
+    assert_refused(problems, "uid 100000 is in a subordinate id range")
+
+
 def test_group_add_takes_numeric_allowed_ids_only(project):
-    assert problems_for(project, group_add=[str(GID), 65534]) == []
-    assert_refused(problems_for(project, group_add=["0"]), "group_add '0' is neither")
-    assert_refused(problems_for(project, group_add=["nogroup"]), "group_add 'nogroup' is not numeric")
+    assert problems_for(project, group_add=["4343", 65534]) == []
+    assert_refused(problems_for(project, group_add=["0"]), "group_add '0': gid 0 is root")
+    assert_refused(problems_for(project, group_add=["nogroup"]),
+                   "group_add 'nogroup' does not exist on this host")
 
 
 # --- privileges -----------------------------------------------------------
@@ -377,8 +399,8 @@ def test_deploy_cannot_reserve_devices(project):
 def test_lifecycle_hooks_cannot_escalate(project):
     assert_refused(problems_for(project, post_start=[{"command": "x", "privileged": True}]),
                    "post_start privileged is not allowed")
-    assert_refused(problems_for(project, pre_stop=[{"command": "x", "user": "0"}]),
-                   "user '0' is neither", "user '0' has no group")
+    assert_refused(problems_for(project, pre_stop=[{"command": "x", "user": "0:0"}]),
+                   "uid 0 is root", "gid 0 is root")
     assert problems_for(project, post_start=[{"command": "x", "user": OWN}]) == []
 
 

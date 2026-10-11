@@ -9,8 +9,9 @@ import os
 
 from dockscreen import policy
 
-# What fix puts into `user`: the allowed ids come from the environment (see ids.py), never from a literal.
-USER_TEMPLATE = "${DOCKSCREEN_UID}:${DOCKSCREEN_GID}"
+# What fix puts into `user`: the caller's own ids, which dockscreen exports (ids.py) and allows only with
+# --allow-me. A literal would only fit the person who ran harden.
+USER_TEMPLATE = "${UID}:${GID}"
 
 # Keys whose removal is a safe fix.
 REMOVABLE_SERVICE_KEYS = (
@@ -28,12 +29,13 @@ def fix_config(config, ctx):
     no safe automatic fix; they stay and are reported by check_config on the result.
     """
     fixed = copy.deepcopy(config)
-    allowed_gids = policy.allowed_ids(ctx.gid)
     for name, service in fixed.get("services", {}).items():
+        service_ctx = ctx._replace(mounts=policy.has_host_mounts(service))
         vetted = name in ctx.vetted and not service.get("user")
-        if not vetted and policy.check_user(service.get("user"), ctx):
+        if not vetted and policy.check_user(service.get("user"), service_ctx):
             service["user"] = USER_TEMPLATE
-        service["group_add"] = [g for g in service.get("group_add", []) if policy.parse_id(g) in allowed_gids]
+        service["group_add"] = [
+            g for g in service.get("group_add", []) if not policy.check_group_add([g], service_ctx)]
         if not service["group_add"]:
             del service["group_add"]
         if policy.check_security_opt(service.get("security_opt"), ctx):
@@ -57,7 +59,7 @@ def resolve_user_template(config, ctx):
     resolved = copy.deepcopy(config)
     for service in resolved.get("services", {}).values():
         if service.get("user") == USER_TEMPLATE:
-            service["user"] = f"{ctx.uid}:{ctx.gid}"
+            service["user"] = "{}:{}".format(*ctx.ids.me)
     return resolved
 
 

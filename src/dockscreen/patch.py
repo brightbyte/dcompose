@@ -23,8 +23,8 @@ def render(original, fixed, unfixed=(), notes=()):
 
     changes = service_changes(original, fixed)
     if any("user" in service for service in changes.values()):
-        lines.append("# note: dockscreen sets DOCKSCREEN_UID and DOCKSCREEN_GID; "
-                     "plain docker compose needs them exported.")
+        lines.append("# note: user ${UID}:${GID} runs a service as you: dockscreen allows that only with "
+                     "--allow-me, and plain docker compose needs UID and GID exported.")
     if not changes:
         return "\n".join([*lines, "services: {}", ""])
 

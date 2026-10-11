@@ -8,15 +8,17 @@ parse is the position of the subcommand.
 import os
 import sys
 
-from dockscreen import composerun, guard, ids, policy, realdocker, skipflag
+from dockscreen import composeargs, composerun, config, hostusers, ids, policy, realdocker, screen, skipflag
 from dockscreen.commands import ALIASES, COMMANDS
 
 # Subcommands that create containers from the config. `alpha` is a group (older
-# compose has `alpha watch`); guarding it is cheap and errs on the safe side.
+# compose has `alpha watch`); screening it is cheap and errs on the safe side.
 RUNTIME_SUBCOMMANDS = frozenset({"up", "create", "run", "watch", "scale", "alpha"})
 # Subcommands that only build: they get the build-related checks, not the runtime policy.
 BUILD_SUBCOMMANDS = frozenset({"build", "bake"})
-GUARDED_SUBCOMMANDS = RUNTIME_SUBCOMMANDS | BUILD_SUBCOMMANDS
+SCREENED_SUBCOMMANDS = RUNTIME_SUBCOMMANDS | BUILD_SUBCOMMANDS
+# dockscreen's own options before the subcommand: the caller's ids may be used (see idrules).
+ALLOW_ME_FLAG = "--allow-me"
 
 # Global `docker compose` options that consume the following token as their value.
 # Needed to tell `-f foo.yml up` (subcommand "up") from `-f up` (a value).
@@ -59,27 +61,45 @@ def forward(argv):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
+    try:
+        return dispatch(argv)
+    except config.ConfigError as e:
+        print(f"dockscreen: refusing: config file {e}", file=sys.stderr)
+        return 1
 
+
+def dispatch(argv):
     skipped, argv = skipflag.strip(argv, GLOBAL_OPTS_WITH_VALUE)
     if skipped:
         skipflag.banner()
         return forward(argv)
 
-    try:
-        ids.export(os.environ)
-    except ValueError as e:
-        print(f"dockscreen: {e}", file=sys.stderr)
-        return 1
+    allow_me, argv = skipflag.strip(argv, GLOBAL_OPTS_WITH_VALUE, ALLOW_ME_FLAG)
+    as_me, argv = skipflag.strip(argv, GLOBAL_OPTS_WITH_VALUE, composeargs.AS_ME_FLAG)
+    if as_me:
+        print(f"dockscreen: {composeargs.AS_ME_MESSAGE}", file=sys.stderr)
+        return 2
+    config.current()  # a config file that cannot be trusted stops everything, before any docker runs
+    ids.export(os.environ)
 
     idx = find_subcommand(argv)
     if idx is not None and argv[idx] in COMMANDS:
-        return COMMANDS[argv[idx]](global_args=argv[:idx], args=argv[idx + 1:])
+        return COMMANDS[argv[idx]](global_args=argv[:idx], args=argv[idx + 1:], allow_me=allow_me)
 
-    if is_guarded(argv, idx):
+    if is_screened(argv, idx):
         if argv[idx] not in BUILD_SUBCOMMANDS:
-            return composerun.run(argv, idx)
-        if not guard.passes(argv[:idx], policy.check_build_config):
+            return composerun.run(argv, idx, allow_me=allow_me)
+        if not screen.passes(argv[:idx], policy.check_build_config):
             return 1
+    elif idx is not None and argv[idx] == "exec" and argv[idx + 1:idx + 2] != ["--help"]:
+        try:
+            parsed = composeargs.parse("exec", argv[idx + 1:])
+        except hostusers.UserError as e:
+            screen.report([str(e)])
+            return 1
+        for notice in parsed.notices:
+            print(f"dockscreen: {notice}", file=sys.stderr)
+        argv = [*argv[:idx + 1], *parsed.args]
 
     if wants_help(argv, idx):
         print_help()
@@ -87,15 +107,15 @@ def main(argv=None):
     forward(argv)
 
 
-def is_guarded(argv, idx):
-    """Whether the guard must run: GUARDED_SUBCOMMANDS, unless compose only prints help.
+def is_screened(argv, idx):
+    """Whether screening must run: SCREENED_SUBCOMMANDS, unless compose only prints help.
 
     Only a leading --help counts. After `run <service>` the rest belongs to the
     command (`run app grep -h x`), and flag values can look like options, so
-    anywhere else the guard runs. `up -h` is therefore guarded too, at worst a
+    anywhere else screening runs. `up -h` is therefore screened too, at worst a
     needless refusal.
     """
-    if idx is None or argv[idx] not in GUARDED_SUBCOMMANDS:
+    if idx is None or argv[idx] not in SCREENED_SUBCOMMANDS:
         return False
     return argv[idx + 1:idx + 2] != ["--help"]
 
@@ -113,9 +133,10 @@ def print_help():
         "Everything else is forwarded to docker compose unchanged.",
         "",
         f"{', '.join(sorted(RUNTIME_SUBCOMMANDS))} refuse to run if the config mounts paths outside",
-        "the project directory, runs as any user but the allowed one (you, or DOCKSCREEN_UID/GID) or nobody,",
-        "or asks for extra privileges. They run the project from the checked config, with cap_drop ALL and",
-        "no-new-privileges added to every service that lacks them.",
+        "the project directory, runs as root, as an account of this host or (with mounts) outside the",
+        "nobody range, or asks for extra privileges. They run the project from the checked config, with",
+        "cap_drop ALL and no-new-privileges added to every service that lacks them.",
+        f"{ALLOW_ME_FLAG}, before the subcommand, allows services to run as you.",
         f"{', '.join(sorted(BUILD_SUBCOMMANDS))} refuse builds that read outside the project, use the",
         "host network, run privileged or forward your SSH agent. See `dockscreen audit`.",
         f"{skipflag.FLAG}, before the subcommand, turns all of this off.",

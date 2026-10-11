@@ -5,18 +5,21 @@ whatever its image says. The image is acquired first, following the project's ow
 automatic updates keep happening (pull, or build if it is built from a Dockerfile), and then the same
 rule as `docker run` is applied to the identity it would run as (gate.assess):
 
-- no bind mounts and an acceptable user of its own: left alone;
-- root, or any image user at all if the service has bind mounts: the generated config runs the
-  service as nobody instead, and says which ids the image would have used;
-- a user of its own that exists on this host, without mounts: refused, set `user:` yourself.
+- the config file names a user for the image's repository, and the image was pulled from there:
+  that user;
+- root: the configured default user instead (nobody unless configured otherwise), with a notice;
+- otherwise the image's own user if the id rules accept it, with the service's mounts; refused if not.
+
+Whatever is accepted is pinned in the generated config as `user: "uid:gid"`.
 
 In the generated config only, services that were looked at get `pull_policy: never` and, unless they are
 built, `image:` set to the id of the image that was checked, so that compose runs that image and neither
 pulls another one nor follows a tag that something else has moved in between. Neither is written to the files
 the project owns or to `harden` output, which would silently turn off the project's updates.
 
-A service that is not started by this command and sets no user is run as nobody if it does get started:
-a mistake in working out what starts must fail safe.
+A service that is not started by this command and sets no user is run as the default user if it does get
+started: a mistake in working out what starts must fail safe. So is a service whose user the command line
+chose (`run -u`), which the command line then overrides.
 """
 
 import copy
@@ -24,7 +27,7 @@ import json
 from collections.abc import Callable
 from typing import NamedTuple
 
-from dockscreen import gate, imageuser
+from dockscreen import gate, imageuser, policy
 from dockscreen.dockerclient import DockerError
 
 
@@ -51,14 +54,6 @@ class Prepared(NamedTuple):
     problems: list
 
 
-def has_host_mounts(service):
-    """Whether the service reaches host files: bind mounts, secrets and configs (bind-mounted files),
-    devices, or the volumes of another container."""
-    binds = any(isinstance(m, dict) and m.get("type") == "bind" for m in service.get("volumes") or [])
-    others = ("volumes_from", "devices", "secrets", "configs")
-    return binds or any(service.get(key) for key in others)
-
-
 def unset_user_services(config):
     return frozenset(n for n, s in (config.get("services") or {}).items() if not (s or {}).get("user"))
 
@@ -68,11 +63,12 @@ def image_name(config, name, service):
     return service.get("image") or f"{config.get('name', '')}-{name}"
 
 
-def prepare(command, config, args, tools):
+def prepare(command, config, args, tools, chosen=frozenset()):
     """Acquire the images of the services that will start and decide about those without a user.
 
     command: the compose command line (up to the subcommand) on the config to run.
     args: the arguments after the subcommand, which name services and may carry --build or --pull.
+    chosen: services whose user the command line chooses (`run -u`); their images are not decided.
     """
     try:
         verify_round_trip(command, config, tools)
@@ -83,7 +79,7 @@ def prepare(command, config, args, tools):
     if failures:
         return Prepared(to_run, {}, failures)
 
-    decisions = decide(config, to_run, tools)
+    decisions = decide(config, to_run - chosen, tools)
     problems = [
         f"service {name}: image {d.image}: {'; '.join(d.assessment.problems)}; set user: to choose one"
         for name, d in decisions.items() if d.assessment.kind == "refused"
@@ -198,7 +194,8 @@ def decide(config, to_run, tools):
                 info = tools.docker.inspect_container(container)
                 image_id = info.get("Image")
                 assessment = gate.assess(tools.gate_ctx, container, info, explicit=False,
-                                         mounts=has_host_mounts(service))
+                                         mounts=policy.has_host_mounts(service), reference=image,
+                                         built="build" in service)
             except (DockerError, ValueError, KeyError) as e:
                 assessment = gate.Assessment("refused", [str(e)])
             finally:
@@ -207,8 +204,11 @@ def decide(config, to_run, tools):
     return decisions
 
 
-def finalize(config, prepared):
-    """(config to run, services whose user dockscreen set from the vetted image). The input is left alone."""
+def finalize(config, prepared, ctx):
+    """(config to run, services whose user dockscreen set from the vetted image). The input is left alone.
+
+    ctx: the gate.Context the decisions were made with, for the default user.
+    """
     final = copy.deepcopy(config)
     vetted = set()
     for name, service in final["services"].items():
@@ -217,52 +217,53 @@ def finalize(config, prepared):
         decision = prepared.decisions.get(name)
         kind = decision.assessment.kind if decision else "not started"
         if kind in ("fallback", "not started"):
-            service["user"] = gate.FALLBACK_USER
-        elif kind == "ok":
+            service["user"] = gate.default_user_spec(ctx)  # an allowed id: the policy accepts it
+        elif kind in ("configured", "ok"):
             # pinned as numbers: the runtime reads neither passwd nor group for `uid:gid`, so it cannot
             # resolve the image's user to anything but what was checked
-            service["user"] = gate.image_user_spec(decision.assessment)
+            service["user"] = gate.pinned_user(ctx, decision.assessment)
             vetted.add(name)
-        if decision and kind in ("ok", "fallback"):
+        if decision and kind in ("configured", "ok", "fallback"):
             service["pull_policy"] = "never"  # the image that was checked is the one that runs
             if decision.image_id and "build" not in service:
                 service["image"] = decision.image_id  # ... even if the name is moved to another image
     return final, frozenset(vetted)
 
 
-def describe(config, prepared, local=None):
+def describe(config, prepared, ctx):
     """One line per service without a user: what dockscreen will do about it.
 
-    local: the host's accounts (imageuser.LocalIds), to say which local user an image's ids would be.
+    ctx: the gate.Context the decisions were made with.
     """
     lines = []
     for name in sorted(unset_user_services(config)):
         decision = prepared.decisions.get(name)
         if decision is None:
-            lines.append(f"service {name}: no user set and not started by default; "
-                         f"dockscreen runs it as nobody ({gate.FALLBACK_USER}) if it is started")
-        elif decision.assessment.kind == "ok":
-            who = imageuser.describe(decision.assessment.identity, local)
+            lines.append(f"service {name}: no user set and not started by default; dockscreen runs it "
+                         f"as the default user ({gate.default_user_spec(ctx)}) if it is started")
+            continue
+        assessment = decision.assessment
+        if assessment.kind == "ok":
+            who = imageuser.describe(assessment.identity, ctx.local)
             lines.append(f"service {name}: no user set; image {decision.image} runs as {who}; accepted")
-        elif decision.assessment.kind == "fallback":
-            lines.append(f"service {name}: no user set; {fallback_text(decision, local)}")
+        elif assessment.kind == "configured":
+            lines.append(f"service {name}: no user set; image {decision.image} runs as "
+                         f"{gate.pinned_user(ctx, assessment)}, the user the config file sets for it")
+        elif assessment.kind == "fallback":
+            lines.append(f"service {name}: no user set; {fallback_text(ctx, decision)}")
+        if assessment.note:
+            lines.append(f"service {name}: note: {assessment.note}")
     return lines
 
 
-def fallback_text(decision, local):
-    """Why the service is run as nobody, and how to run it as the image's user instead."""
-    summary = gate.fallback_summary(f"image {decision.image}", decision.assessment, local, "service")
-    text = f"{summary}; dockscreen runs it as nobody ({gate.FALLBACK_USER})"
-    if decision.assessment.reason == "mounts":
-        identity = decision.assessment.identity
-        text += (f". To run it as the image's user, set user: \"${{DOCKSCREEN_UID}}:${{DOCKSCREEN_GID}}\" "
-                 f"and run with DOCKSCREEN_UID={identity.uid} DOCKSCREEN_GID={identity.gid}")
-    return text
+def fallback_text(ctx, decision):
+    return (f"image {decision.image} would run as root; dockscreen runs it as the default user "
+            f"({gate.default_user_spec(ctx)})")
 
 
-def notices(prepared, local=None):
+def notices(prepared, ctx):
     """What a run is about to do that the project did not ask for."""
     return [
-        f"service {name}: {fallback_text(d, local)}"
+        f"service {name}: {fallback_text(ctx, d)}"
         for name, d in prepared.decisions.items() if d.assessment.kind == "fallback"
     ]

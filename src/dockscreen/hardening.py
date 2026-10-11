@@ -1,8 +1,9 @@
 """Defaults dockscreen adds to every service before running it.
 
 A project does not have to set these itself: a service without `cap_drop: [ALL]`
-or `no-new-privileges` gets them, and the names root and nobody in `user:` are resolved
-to ids. A project cannot weaken them, because adding
+or `no-new-privileges` gets them. Names in `user:`, hook users and `group_add` are resolved
+to ids on this host, so the generated file never asks the image to resolve a name; the policy
+then checks the ids, and refuses a name that does not exist here. A project cannot weaken them, because adding
 `cap_add` or `no-new-privileges:false` is still refused by the policy. The
 additions are reported by `audit` and written out by `harden`.
 """
@@ -11,16 +12,10 @@ import copy
 import json
 from typing import NamedTuple
 
-from dockscreen import policy
+from dockscreen import hostusers, policy
 
 CAP_DROP = "ALL"
 SECURITY_OPT = "no-new-privileges:true"
-
-
-# The only names a compose file may use: resolved to ids here, so the generated file never asks the
-# image to resolve a name. Every other name is left for the policy to refuse.
-USER_NAMES = {"root": 0, "nobody": 65534}
-GROUP_NAMES = {"root": 0, "nobody": 65534, "nogroup": 65534}
 
 
 class Addition(NamedTuple):
@@ -29,12 +24,16 @@ class Addition(NamedTuple):
     message: str  # what was missing or a name, and what dockscreen does about it
 
 
-def apply(config):
-    """(config with the defaults added and user names resolved, the list of additions)."""
+def apply(config, accounts=None):
+    """(config with the defaults added and user names resolved, the list of additions).
+
+    accounts: the users and groups to resolve names with (hostusers.Accounts, this host's).
+    """
+    accounts = accounts or hostusers.Accounts()
     hardened = copy.deepcopy(config)
     additions = []
     for name, service in (hardened.get("services") or {}).items():
-        additions += resolve_user_names(name, service)
+        additions += resolve_user_names(name, service, accounts)
         if policy.check_cap_drop(service.get("cap_drop"), None):
             reason = "is not set" if not service.get("cap_drop") else f"does not include {CAP_DROP}"
             service["cap_drop"] = [*(service.get("cap_drop") or []), CAP_DROP]
@@ -49,21 +48,58 @@ def apply(config):
     return hardened, additions
 
 
-def resolve_user_names(name, service):
-    """Replace the names root and nobody (and nogroup) in the service's user by ids."""
-    spec = service.get("user")
-    if not spec:
-        return []
+def resolve_user_names(name, service, accounts):
+    """Replace names in the service's user, hook users and group_add by their ids on this host."""
+    additions = []
+    if service.get("user"):
+        resolved = resolve_spec(service["user"], accounts)
+        if resolved != service["user"]:
+            additions.append(Addition(name, "user", resolved_message("user", service["user"], resolved)))
+            service["user"] = resolved
+    for key in ("post_start", "pre_stop"):
+        for hook in service.get(key) or []:
+            if isinstance(hook, dict) and hook.get("user"):
+                resolved = resolve_spec(hook["user"], accounts)
+                if resolved != hook["user"]:
+                    message = resolved_message(f"{key} user", hook["user"], resolved)
+                    additions.append(Addition(name, key, message))
+                    hook["user"] = resolved
+    if service.get("group_add"):
+        resolved = [resolve_group(g, accounts) for g in service["group_add"]]
+        if resolved != service["group_add"]:
+            additions.append(Addition(name, "group_add", resolved_message(
+                "group_add", service["group_add"], resolved)))
+            service["group_add"] = resolved
+    return additions
+
+
+def resolve_spec(spec, accounts):
+    """`name` becomes that account's `uid:gid`, a group name its gid; numbers and unknown names stay.
+
+    A uid alone stays alone: the policy refuses it rather than guess a group.
+    """
     user, has_group, group = str(spec).partition(":")
-    if user not in USER_NAMES and group not in GROUP_NAMES:
-        return []
-    uid = str(USER_NAMES.get(user, user))
-    # a bare name has the group of the same id, as the account does in every image that has one
-    gid = str(GROUP_NAMES.get(group, group)) if has_group else uid
-    resolved = f"{uid}:{gid}"
-    service["user"] = resolved
-    message = f"user {spec!r} is a name; dockscreen resolves it to {json.dumps(resolved)}"
-    return [Addition(name, "user", message)]
+    account = accounts.user(user) if user and policy.parse_id(user) is None else None
+    uid = str(account[0]) if account else user
+    if has_group:
+        gid = resolve_group(group, accounts)
+    elif account:
+        gid = str(account[1])  # a name brings its primary group, as with --as
+    else:
+        return str(spec) if uid == user else uid
+    return f"{uid}:{gid}"
+
+
+def resolve_group(group, accounts):
+    if policy.parse_id(group) is not None:
+        return group
+    gid = accounts.group(str(group))
+    return group if gid is None else str(gid)
+
+
+def resolved_message(what, before, after):
+    return (f"{what} {json.dumps(before)} names an account on this host; "
+            f"dockscreen resolves it to {json.dumps(after)}")
 
 
 def describe(additions):
@@ -74,8 +110,8 @@ def describe(additions):
 def defaults_note():
     """One general sentence for generated files, instead of a line per service."""
     return (f'dockscreen also adds cap_drop: ["{CAP_DROP}"] and security_opt: ["{SECURITY_OPT}"] to every '
-            "service that lacks them, resolves the user names nobody and root to ids, and runs a service "
-            "that sets no user as nobody when its image would run as root or it has bind mounts, "
+            "service that lacks them, resolves user and group names to ids on this host, and runs a "
+            "service that sets no user as the configured default user when its image would run as root, "
             "so these are not repeated here")
 
 

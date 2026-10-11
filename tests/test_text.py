@@ -1,6 +1,8 @@
 import os
 
-from dockscreen import autofix, commands, guard, patch, policy
+from fakes import rules
+
+from dockscreen import autofix, commands, patch, policy, screen
 from dockscreen.text import printable
 
 UID, GID = os.getuid(), os.getgid()
@@ -17,7 +19,7 @@ def test_newline_in_untrusted_text_cannot_leave_the_patch_comment():
         "user": f"{UID}:{GID}", "security_opt": ["no-new-privileges:true"], "cap_drop": ["ALL"],
         "volumes": [{"type": "bind", "source": evil, "target": "/e"}],
     }}}
-    fixed = autofix.fix_config(original, policy.Context("/proj", UID, GID))
+    fixed = autofix.fix_config(original, policy.Context("/proj", rules(me=(UID, GID), allow_me=True)))
 
     text = patch.render(original, fixed, ["bind mount " + evil])
 
@@ -33,21 +35,20 @@ def test_patch_quotes_unusual_keys():
 
 
 def test_refusal_output_cannot_forge_lines_or_move_the_cursor(capsys):
-    guard.report(["bind mount '/x\ndockscreen: audit passed\x1b[2K' is outside /p"])
+    screen.report(["bind mount '/x\ndockscreen: audit passed\x1b[2K' is outside /p"])
     err = capsys.readouterr().err
     assert err.count("\n") == 1  # the one print() newline
     assert "\x1b" not in err.replace("\\x1b", "")
 
 
 def test_audit_info_lines_are_escaped(monkeypatch, capsys, tmp_path):
-    from fakes import FakeImages, make_tools
+    from fakes import FakeImages, install_tools, make_tools
 
-    from dockscreen import composerun
     image = "x\x1b[31m:1"
     cfg = {"name": "p", "services": {"web": {"image": image}}}
-    monkeypatch.setattr(guard, "inspect", lambda global_args: (cfg, str(tmp_path)))
+    monkeypatch.setattr(screen, "inspect", lambda global_args: (cfg, str(tmp_path)))
     tools, _ = make_tools(FakeImages(users={image: "app"}))
-    monkeypatch.setattr(composerun, "default_tools", lambda: tools)
+    install_tools(monkeypatch, tools)
 
     commands.audit([], [])
 

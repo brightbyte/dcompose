@@ -1,8 +1,8 @@
-"""Which uid and gids a container would run as, and whether an image may choose them.
+"""Which uid and gids a container would run as, read from the image as docker reads it.
 
-The image is hostile, so its own /etc/passwd and /etc/group decide the
-identity docker will use, and the rule is applied to that: not root, and not an
-id that exists on this host. `nobody` is exempt.
+The image is hostile, so its own /etc/passwd and /etc/group decide the identity docker would use;
+idrules decides whether the image may have it. Whatever is accepted runs pinned as numbers, so a
+difference between this reading and docker's can at worst refuse a good image.
 """
 
 import grp
@@ -148,31 +148,3 @@ def describe(identity, local=None):
     if identity.supplementary:
         text += ", supplementary gids " + ", ".join(who("group", g) for g in identity.supplementary)
     return text
-
-
-def is_nobody(identity):
-    return {identity.uid, identity.gid, *identity.supplementary} == {NOBODY}
-
-
-def check(identity, local):
-    """Problems with letting the image run as this identity; empty if acceptable.
-
-    Root, and ids that exist on this host: a container shares the kernel's per-user limits (processes,
-    inotify watches) with the host account of the same id, and owns that account's files in anything it
-    mounts. Whether it mounts anything is decided by the caller (gate.assess).
-    """
-    problems = []
-    for kind, value, lookup in (
-        [("uid", identity.uid, local.user_name)]
-        + [("gid", identity.gid, local.group_name)]
-        + [("supplementary gid", g, local.group_name) for g in identity.supplementary]
-    ):
-        if value == NOBODY:
-            continue
-        if value == 0:
-            problems.append(f"the image would run with {kind} 0 (root)")
-        elif (name := lookup(value)) is not None:
-            account = "user" if kind == "uid" else "group"
-            problems.append(f"the image would run with {kind} {value}, which exists on this host "
-                            f"(local {account} {name})")
-    return problems
