@@ -47,6 +47,39 @@ def resolve_account(name, getpwnam=pwd.getpwnam):
             [f"Resolving user {name} to uid {account.pw_uid}, gid {account.pw_gid}"])
 
 
+class UserOptions:
+    """The ways a command line gives a user, each turned into `--user=uid:gid` for docker.
+
+    Records whether a user was given, whether the caller's own ids are allowed (--as-me), and the
+    notices that resolving names produced.
+    """
+
+    def __init__(self, current_user, resolve):
+        """current_user: the (uid, gid) --as-me stands for; resolve: like resolve_account."""
+        self.current_user = current_user
+        self.resolve = resolve
+        self.user_given = False
+        self.allow_me = False
+        self.notices = []
+
+    def numeric(self, spec):
+        """--user or -u: numeric ids only."""
+        self.user_given = True
+        return f"--user={require_numeric(spec)}"
+
+    def account(self, name):
+        """--as: a local account, as ids."""
+        self.user_given = True
+        resolved, messages = self.resolve(name)
+        self.notices += messages
+        return f"--user={resolved}"
+
+    def me(self):
+        """--as-me: the caller's own ids, which are then allowed."""
+        self.user_given = self.allow_me = True
+        return f"--user={ids.format_user(self.current_user)}"
+
+
 class Accounts:
     """Users and groups on this host, by name, through NSS (so LDAP and sssd accounts count)."""
 

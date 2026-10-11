@@ -9,6 +9,7 @@ import os
 import sys
 
 from dockscreen import (
+    argscan,
     composeargs,
     composerun,
     config,
@@ -43,22 +44,6 @@ GLOBAL_OPTS_WITH_VALUE = frozenset({
 })
 
 
-def find_subcommand(argv, value_opts=GLOBAL_OPTS_WITH_VALUE):
-    """Return the index of the subcommand in argv, or None. value_opts: options that take a value."""
-    i = 0
-    while i < len(argv):
-        token = argv[i]
-        if token == "--":
-            return None
-        if token in value_opts:
-            i += 2
-        elif token.startswith("-"):
-            i += 1
-        else:
-            return i
-    return None
-
-
 def forward(argv):
     """Replace this process with `docker compose argv`, keeping tty, signals and exit code."""
     try:
@@ -90,7 +75,7 @@ def dispatch(argv):
     config.current()  # a config file that cannot be trusted stops everything, before any docker runs
     ids.export(os.environ)
 
-    idx = find_subcommand(argv)
+    idx = argscan.find_subcommand(argv, GLOBAL_OPTS_WITH_VALUE)
     if idx is not None and argv[idx] in COMMANDS:
         return COMMANDS[argv[idx]](global_args=argv[:idx], args=argv[idx + 1:], allow_me=allow_me)
 

@@ -8,6 +8,7 @@ import os
 import sys
 
 from dockscreen import (
+    argscan,
     cli,
     config,
     flags,
@@ -46,7 +47,7 @@ def dispatch(argv):
     allow_me, argv = flags.strip(argv, DOCKER_OPTS_WITH_VALUE, flags.ALLOW_ME)
     config.current()  # a config file that cannot be trusted stops everything, before any docker runs
 
-    idx = cli.find_subcommand(argv, DOCKER_OPTS_WITH_VALUE)
+    idx = argscan.find_subcommand(argv, DOCKER_OPTS_WITH_VALUE)
     if idx is None:
         return passthrough(argv)
 

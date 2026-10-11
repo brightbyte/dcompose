@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from dockscreen import cli, composerun, hostusers, policy, screen
+from dockscreen import argscan, cli, composerun, hostusers, policy, screen
 from dockscreen.commands import COMMANDS
 
 
@@ -17,7 +17,7 @@ from dockscreen.commands import COMMANDS
     (["--help"], None),
 ])
 def test_find_subcommand(argv, expected):
-    assert cli.find_subcommand(argv) == expected
+    assert argscan.find_subcommand(argv, cli.GLOBAL_OPTS_WITH_VALUE) == expected
 
 
 def test_unknown_args_are_forwarded_verbatim(forwarded):
@@ -117,7 +117,7 @@ def test_unscreened_subcommand_is_not_inspected(forwarded, monkeypatch):
     ([], False),
 ])
 def test_is_screened(argv, screened):
-    assert cli.is_screened(argv, cli.find_subcommand(argv)) == screened
+    assert cli.is_screened(argv, argscan.find_subcommand(argv, cli.GLOBAL_OPTS_WITH_VALUE)) == screened
 
 
 # --- dockscreen's own options and the config file ------------------------------------

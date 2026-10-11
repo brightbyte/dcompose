@@ -26,7 +26,7 @@ import os
 from typing import NamedTuple
 
 from dockscreen import config as configuration
-from dockscreen import hostusers, ids, images, imageuser, messages, runargs
+from dockscreen import argscan, hostusers, ids, images, imageuser, messages, runargs
 from dockscreen.dockerclient import DockerError
 from dockscreen.text import printable
 
@@ -35,6 +35,7 @@ from dockscreen.text import printable
 DEFAULTS = ["--cap-drop=ALL", "--security-opt=no-new-privileges:true"]
 CHOOSE_HINT = "pass --user UID:GID, --as NAME or --as-me to choose a user"
 
+# Options of `docker start` and `restart` that take a value.
 VALUE_LONG = frozenset({"--detach-keys", "--checkpoint", "--checkpoint-dir", "--signal", "--time"})
 VALUE_SHORT = frozenset("st")
 
@@ -303,7 +304,7 @@ def check_existing(ctx, args):
     default user or a configured one) is refused like one whose user is not accepted.
     """
     problems = []
-    for ref in container_refs(args):
+    for ref in argscan.positionals(args, VALUE_LONG, VALUE_SHORT):
         try:
             info = ctx.docker.inspect_container(ref)
             assessment = assess(ctx, info["Id"], info)
@@ -316,24 +317,6 @@ def check_existing(ctx, args):
         except (DockerError, ValueError, KeyError) as e:
             problems.append(f"{ref}: {e}")
     return problems
-
-
-def container_refs(args):
-    refs = []
-    i = 0
-    while i < len(args):
-        token = args[i]
-        if token == "--":
-            refs += args[i + 1:]
-            break
-        if token.startswith("--"):
-            i += 1 if "=" in token or token not in VALUE_LONG else 2
-        elif token.startswith("-") and token != "-":
-            i += 2 if token[-1] in VALUE_SHORT else 1
-        else:
-            refs.append(token)
-            i += 1
-    return refs
 
 
 def verify_split(info, parsed):

@@ -9,7 +9,7 @@ daemon's.
 
 from typing import NamedTuple
 
-from dockscreen import flags, hostusers, ids
+from dockscreen import flags, hostusers
 
 # Long options of `docker run`/`create` that take a value in the next argument.
 LONG_VALUE_FLAGS = frozenset({
@@ -47,27 +47,11 @@ class ParsedRun(NamedTuple):
 
 
 class _State:
-    def __init__(self, current_user, resolve):
-        self.current_user = ids.format_user(current_user)
-        self.resolve = resolve
-        self.notices = []
+    def __init__(self, users):
+        self.users = users  # hostusers.UserOptions
         self.kept = []
         self.detach = False
         self.detach_keys = None
-        self.user_given = False
-        self.allow_me = False
-
-    def user_value(self, value):
-        """The value of --user or -u: numeric ids only."""
-        self.user_given = True
-        return hostusers.require_numeric(value)
-
-    def account_value(self, name):
-        """The value of --as: a local account, as ids."""
-        self.user_given = True
-        resolved, messages = self.resolve(name)
-        self.notices += messages
-        return resolved
 
 
 def parse(args, current_user, resolve=hostusers.resolve_account):
@@ -77,7 +61,8 @@ def parse(args, current_user, resolve=hostusers.resolve_account):
     resolve: turns the name given to --as into "uid:gid" (hostusers.resolve_account), with messages.
     Raises hostusers.UserError if --user is not numeric or --as does not name a local user.
     """
-    state = _State(current_user, resolve)
+    users = hostusers.UserOptions(current_user, resolve)
+    state = _State(users)
     i = 0
     while i < len(args):
         token = args[i]
@@ -94,23 +79,22 @@ def parse(args, current_user, resolve=hostusers.resolve_account):
     if i >= len(args):
         raise ParseError("no image found in the command line")
     return ParsedRun([*state.kept, *args[i:]], args[i], args[i + 1:], state.detach, state.detach_keys,
-                     state.user_given, state.notices, state.allow_me)
+                     users.user_given, users.notices, users.allow_me)
 
 
 def parse_long(args, i, state):
-    """Handle one --option; returns the index after it and its value."""
+    """Handle one --option; returns the index after it."""
     token = args[i]
     name, has_value, value = token.partition("=")
     if name == flags.AS_ME:
-        state.user_given = state.allow_me = True
-        state.kept.append(f"--user={state.current_user}")
+        state.kept.append(state.users.me())
     elif name == flags.ALLOW_ME:  # not a docker option: dropped
-        state.allow_me = True
+        state.users.allow_me = True
     elif name == flags.AS:
         if not has_value:
             i += 1
             value = value_at(args, i, name)
-        state.kept.append(f"--user={state.account_value(value)}")
+        state.kept.append(state.users.account(value))
     elif name == "--detach":
         state.detach = value.lower() != "false" if has_value else True
     elif name == "--sig-proxy":
@@ -125,7 +109,7 @@ def parse_long(args, i, state):
         if not has_value:
             i += 1
             value = value_at(args, i, name)
-        state.kept.append(f"--user={state.user_value(value)}")
+        state.kept.append(state.users.numeric(value))
     else:
         state.kept.append(token)
         if name in LONG_VALUE_FLAGS and not has_value:
@@ -156,7 +140,7 @@ def parse_short(args, i, state):
                 consumed = 1 if rest else 2
                 if keep:
                     state.kept.append("-" + keep)
-                state.kept.append(f"--user={state.user_value(value)}")
+                state.kept.append(state.users.numeric(value))
                 return i + consumed
             keep += char + rest
             next_is_value = not rest

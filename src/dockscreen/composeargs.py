@@ -15,7 +15,7 @@ if no user had been chosen.
 import os
 from typing import NamedTuple
 
-from dockscreen import flags, hostusers, ids
+from dockscreen import flags, hostusers
 
 # Options of `docker compose run` and `exec` that take a value in the next argument.
 VALUE_FLAGS = {
@@ -45,50 +45,58 @@ def parse(subcommand, args, resolve=None, current_user=None):
     resolve: turns the name given to --as into "uid:gid" (hostusers.resolve_account), with messages.
     current_user: the (uid, gid) that --as-me stands for; the caller's by default.
     """
-    resolve = resolve or hostusers.resolve_account
+    users = hostusers.UserOptions(current_user or (os.getuid(), os.getgid()),
+                                  resolve or hostusers.resolve_account)
     value_flags = VALUE_FLAGS[subcommand]
-    short_values = {flag[1] for flag in value_flags if len(flag) == 2}
-    user_given = False
-    kept, notices = [], []
+    kept = []
     i = 0
     while i < len(args):
-        start, token = i, args[i]
+        token = args[i]
         if token == "--":
             service = args[i + 1] if i + 1 < len(args) else None
-            return Parsed(service, user_given, [*kept, *args[i:]], notices)
+            return Parsed(service, users.user_given, [*kept, *args[i:]], users.notices)
         if token == flags.AS_ME:
-            kept.append(f"--user={ids.format_user(current_user or (os.getuid(), os.getgid()))}")
-            user_given = True
+            kept.append(users.me())
             i += 1
-            continue
-        if token.startswith("--"):
-            name, has_value, value = token.partition("=")
-            if (name in value_flags or name == flags.AS) and not has_value:
-                i += 1
-                value = args[i] if i < len(args) else ""
-            if name == "--user":
-                hostusers.require_numeric(value)
-                user_given = True
-            elif name == flags.AS:
-                resolved, messages = resolve(value)
-                notices += messages
-                user_given = True
-                kept.append(f"--user={resolved}")
-                i += 1
-                continue
+        elif token.startswith("--"):
+            i = parse_long(args, i, value_flags, users, kept)
         elif token.startswith("-") and token != "-":
-            for j, char in enumerate(token[1:], start=1):
-                if char in short_values:
-                    value = token[j + 1:]
-                    if not value:
-                        i += 1
-                        value = args[i] if i < len(args) else ""
-                    if char == "u":
-                        hostusers.require_numeric(value)
-                        user_given = True
-                    break
+            i = parse_short(args, i, value_flags, users, kept)
         else:
-            return Parsed(token, user_given, [*kept, *args[i:]], notices)
-        kept += args[start:i + 1]
-        i += 1
-    return Parsed(None, user_given, kept, notices)
+            return Parsed(token, users.user_given, [*kept, *args[i:]], users.notices)
+    return Parsed(None, users.user_given, kept, users.notices)
+
+
+def parse_long(args, i, value_flags, users, kept):
+    """Read the --option at args[i] into kept, with --as replaced; returns the index after it."""
+    name, has_value, value = args[i].partition("=")
+    end = i
+    if (name in value_flags or name == flags.AS) and not has_value:
+        end = i + 1
+        value = args[end] if end < len(args) else ""
+    if name == flags.AS:
+        kept.append(users.account(value))
+        return end + 1
+    if name == "--user":
+        users.numeric(value)
+    kept += args[i:end + 1]
+    return end + 1
+
+
+def parse_short(args, i, value_flags, users, kept):
+    """Read the cluster at args[i] (such as -it or -u0:0) into kept; returns the index after it."""
+    token = args[i]
+    short_values = {flag[1] for flag in value_flags if len(flag) == 2}
+    end = i
+    for j, char in enumerate(token[1:], start=1):
+        if char not in short_values:
+            continue
+        value = token[j + 1:]
+        if not value:
+            end = i + 1
+            value = args[end] if end < len(args) else ""
+        if char == "u":
+            users.numeric(value)
+        break
+    kept += args[i:end + 1]
+    return end + 1

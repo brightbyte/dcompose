@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 
-from dockscreen import config, idrules, imageuser, messages, policy, realdocker
+from dockscreen import argscan, config, idrules, imageuser, messages, policy, realdocker
 
 COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 COMPOSE_VARS_IN_ENV_FILE = re.compile(r"^\s*(export\s+)?COMPOSE_(FILE|PATH_SEPARATOR)\s*=", re.MULTILINE)
@@ -98,9 +98,9 @@ REMOTE_MESSAGE = "the daemon is not the default local one; ids and paths cannot 
 
 def is_remote(global_args, env, docker):
     """Whether the daemon might not be this host's own, where host ids and paths mean nothing."""
-    if option_values(global_args, "--host", "-H"):
+    if argscan.option_values(global_args, "--host", "-H"):
         return True
-    if option_values(global_args, "--context", "-c"):
+    if argscan.option_values(global_args, "--context", "-c"):
         return True
     host = env.get("DOCKER_HOST", "")
     if host and not host.startswith("unix://"):
@@ -112,11 +112,11 @@ def is_remote(global_args, env, docker):
 
 def project_directory(global_args, env, cwd):
     """Mirror how docker compose picks the project directory."""
-    explicit = option_values(global_args, "--project-directory", None)
+    explicit = argscan.option_values(global_args, "--project-directory", None)
     if explicit:
         return os.path.realpath(os.path.join(cwd, explicit[-1]))
 
-    files = option_values(global_args, "--file", "-f")
+    files = argscan.option_values(global_args, "--file", "-f")
     if not files and env.get("COMPOSE_FILE"):
         files = env["COMPOSE_FILE"].split(env.get("COMPOSE_PATH_SEPARATOR", os.pathsep))
     if "-" in files:
@@ -124,7 +124,7 @@ def project_directory(global_args, env, cwd):
     if files:
         return os.path.realpath(os.path.dirname(os.path.join(cwd, files[0])))
 
-    return find_compose_dir(cwd, option_values(global_args, "--env-file", None))
+    return find_compose_dir(cwd, argscan.option_values(global_args, "--env-file", None))
 
 
 def find_compose_dir(start, env_files=(), home=None, uid=None):
@@ -166,37 +166,3 @@ def refuse_compose_vars_in(path):
     if COMPOSE_VARS_IN_ENV_FILE.search(content):
         raise ScreenError(f"{path} sets COMPOSE_FILE or COMPOSE_PATH_SEPARATOR; "
                          "set it in your shell or use -f, so the project directory can be verified")
-
-
-def option_values(args, long_name, short_name):
-    """All values given for an option, in `--opt v`, `--opt=v` and `-ov` forms."""
-    values = []
-    i = 0
-    while i < len(args):
-        token = args[i]
-        if token in (long_name, short_name) and i + 1 < len(args):
-            values.append(args[i + 1])
-            i += 1
-        elif token.startswith(long_name + "="):
-            values.append(token[len(long_name) + 1:])
-        elif short_name and token.startswith(short_name) and not token.startswith("--") and len(token) > 2:
-            values.append(token[2:])
-        i += 1
-    return values
-
-
-def strip_options(args, names):
-    """args without the given options, which take a value: `--opt v`, `--opt=v` and `-ov` forms."""
-    kept = []
-    i = 0
-    while i < len(args):
-        token = args[i]
-        if token in names:
-            i += 2
-        elif any(token.startswith(n + "=") for n in names if n.startswith("--")) \
-                or any(token.startswith(n) for n in names if not n.startswith("--")):
-            i += 1
-        else:
-            kept.append(token)
-            i += 1
-    return kept

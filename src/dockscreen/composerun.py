@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 
 from dockscreen import (
+    argscan,
     composeargs,
     composeimages,
     gate,
@@ -117,7 +118,7 @@ def generated(global_args, project_dir):
             with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
                 json.dump(config, f)  # JSON is YAML
             return [
-                realdocker.docker_bin(), "compose", *screen.strip_options(global_args, REPLACED_OPTIONS),
+                realdocker.docker_bin(), "compose", *argscan.strip_options(global_args, REPLACED_OPTIONS),
                 "-f", path, "--project-directory", project_dir, "--project-name", config["name"],
             ]
         yield command

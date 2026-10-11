@@ -3,7 +3,7 @@ import os
 import pytest
 from fakes import GROUP, PASSWD, Local, host_account, rules
 
-from dockscreen import config, docker_cli, gate, hostusers
+from dockscreen import argscan, config, docker_cli, gate, hostusers
 from dockscreen.dockerclient import DockerError, first_file_of_tar
 
 DEFAULTS = ["--cap-drop=ALL", "--security-opt=no-new-privileges:true"]
@@ -347,7 +347,7 @@ def test_unreadable_command_line_is_refused(capsys):
     (["--time=5", "a", "--", "-weird"], ["a", "-weird"]),
 ])
 def test_container_refs(args, refs):
-    assert gate.container_refs(args) == refs
+    assert argscan.positionals(args, gate.VALUE_LONG, gate.VALUE_SHORT) == refs
 
 
 def test_existing_containers_are_checked_by_the_same_rule():

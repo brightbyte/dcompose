@@ -3,7 +3,7 @@ import os
 import pytest
 from fakes import FakeImages, make_tools, read_raw
 
-from dockscreen import composerun, hostusers, screen
+from dockscreen import argscan, composerun, hostusers, screen
 
 UID, GID = os.getuid(), os.getgid()
 
@@ -237,7 +237,7 @@ def test_a_service_that_is_not_started_gets_the_default_user_as_a_fail_safe(monk
     ([], []),
 ])
 def test_strip_options(args, kept):
-    assert screen.strip_options(args, composerun.REPLACED_OPTIONS) == kept
+    assert argscan.strip_options(args, composerun.REPLACED_OPTIONS) == kept
 
 
 def test_run_child_exit_codes_and_signals():

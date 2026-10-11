@@ -27,7 +27,7 @@ import json
 from collections.abc import Callable
 from typing import NamedTuple
 
-from dockscreen import gate, imageuser, policy
+from dockscreen import argscan, gate, imageuser, policy
 from dockscreen.dockerclient import DockerError
 
 
@@ -134,7 +134,7 @@ def services_to_run(command, config, args, tools):
 def acquire(command, config, to_run, args, tools):
     """Pull and build what `up` would, by the project's policy. Returns a list of failures."""
     pull, build = [], []
-    override = cli_option(args, "--pull")
+    override = argscan.option_value(args, "--pull")
     for name in sorted(to_run):
         service = config["services"][name]
         image = image_name(config, name, service)
@@ -156,18 +156,6 @@ def acquire(command, config, to_run, args, tools):
         if names and tools.run_child([*command, subcommand, *names]) != 0:
             return [f"docker compose {subcommand} {' '.join(names)} failed"]
     return []
-
-
-def cli_option(args, name):
-    """The value of `--name value` or `--name=value` before any `--`, if given."""
-    for i, arg in enumerate(args):
-        if arg == "--":
-            break
-        if arg.startswith(name + "="):
-            return arg.partition("=")[2]
-        if arg == name and i + 1 < len(args):
-            return args[i + 1]
-    return None
 
 
 def image_exists(docker, image):
