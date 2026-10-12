@@ -28,7 +28,7 @@ import subprocess
 from collections.abc import Callable
 from typing import NamedTuple
 
-from dockscreen import argscan, imagedecision, images, imageuser, policy, verdict
+from dockscreen import argscan, imagedecision, images, imageuser, messages, policy, verdict
 from dockscreen.dockerclient import DockerError
 
 
@@ -264,22 +264,23 @@ def describe(config, prepared, ctx):
         decision = prepared.decisions.get(name)
         if decision is None:
             default = imagedecision.default_user_spec(ctx)
-            lines.append(f"{verdict.WARN} service {name}: no user set and not started by default; dockscreen "
-                         f"runs it as the default user ({default}) if it is started")
+            text = (f"service {name}: no user set and not started by default; dockscreen runs it as the "
+                    f"default user ({default}) if it is started")
+            lines.append(messages.marked(verdict.WARN, text))
             continue
         assessment, dot = decision.assessment, verdict.dot(decision.assessment)
         if assessment.kind is imagedecision.Kind.OK:
             who = imageuser.describe(assessment.identity, ctx.local)
-            lines.append(f"{dot} service {name}: no user set; image {decision.image} runs as {who}; "
-                         "accepted")
+            lines.append(messages.marked(dot, f"service {name}: no user set; image {decision.image} runs as "
+                                              f"{who}; accepted"))
         elif assessment.kind is imagedecision.Kind.CONFIGURED:
             user = imagedecision.pinned_user(assessment)
-            lines.append(f"{dot} service {name}: no user set; image {decision.image} runs as {user}, "
-                         "the user the config file sets for it")
+            lines.append(messages.marked(dot, f"service {name}: no user set; image {decision.image} runs as "
+                                              f"{user}, the user the config file sets for it"))
         elif assessment.kind is imagedecision.Kind.FALLBACK:
-            lines.append(f"{dot} service {name}: no user set; {fallback_text(decision)}")
+            lines.append(messages.marked(dot, f"service {name}: no user set; {fallback_text(decision)}"))
         if assessment.note:
-            lines.append(f"{verdict.WARN} service {name}: note: {assessment.note}")
+            lines.append(messages.marked(verdict.WARN, f"service {name}: note: {assessment.note}"))
     return lines
 
 

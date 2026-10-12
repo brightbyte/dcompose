@@ -24,7 +24,6 @@ from dockscreen import (
     verdict,
 )
 from dockscreen.dockerclient import DockerNotFound
-from dockscreen.text import printable
 from dockscreen.verdict import Verdict
 
 COMMANDS = {}
@@ -41,7 +40,7 @@ def command(name, *aliases):
     return register
 
 
-HARDEN_HINT = "hint: the harden subcommand prints a compose override file with these fixes."
+HARDEN_HINT = "the harden subcommand prints a compose override file with these fixes"
 
 
 @command("doctor")
@@ -72,10 +71,10 @@ def audit(global_args, args, runtime, allow_me=False):
     if not brief:
         warnings = [*screen.mount_dir_warnings(runtime), *hardening.describe(project.additions),
                     *shellenv.describe(project.hardened, runtime.env)]
-        for line in [*(f"{verdict.WARN} {w}" for w in warnings), *lines]:
-            print(printable(line))
+        for line in [*(messages.marked(verdict.WARN, w) for w in warnings), *lines]:
+            messages.out(line)
         if problems or project.additions:
-            print(HARDEN_HINT)
+            messages.out(messages.marked(verdict.HINT, HARDEN_HINT))
     return verdict.report(outcome, problems, brief)
 
 

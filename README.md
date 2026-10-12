@@ -20,7 +20,7 @@ For `dockscreen compose`: `up`, `create`, `run`, `watch`, `scale` and `alpha` re
 
 `build` and `bake` only check what building can reach: no SSH agent, no host network or privileged builds, and contexts and secrets inside the project.
 
-Every command dockscreen screens ends its output with the verdict, right before docker or compose takes over: ✅ screening passed, ❌ screening refused, or ❗ screening failed when it could not look (the image did not pull, the config did not parse). If `up` or `run` does not show that line, dockscreen was not in the path. Commands it passes on unchecked (`ps`, `logs`, `exec` …) print nothing.
+Every command dockscreen screens ends its output with the verdict, right before docker or compose takes over: ✔ screening passed, ✘ screening refused, or ⚠ screening failed when it could not look (the image did not pull, the config did not parse). If `up` or `run` does not show that line, dockscreen was not in the path. Commands it passes on unchecked (`ps`, `logs`, `exec` …) print nothing.
 
 When refusing, dockscreen says why. `dockscreen compose harden` prints a compose override file that fixes what can be fixed.
 
@@ -135,9 +135,9 @@ Both audits, `dockscreen audit` and `dockscreen compose audit`, end with one of 
 | 1 | refused | the policy says no |
 | 3 | failed | the audit could not get far enough to judge: no docker, the image could not be pulled or created, the compose config could not be read, a pull or build failed |
 
-Exit status 2 means the audit was called wrongly. The report ends with the verdict: ✅ audit passed, ❌ audit refused or ❗ audit failed. Each item in the report has a dot: 🟢 accepted as it is, 🟡 allowed but changed by dockscreen or worth a look, 🔴 refused or not checked.
+Exit status 2 means the audit was called wrongly. The report ends with the verdict: ✔ audit passed, ✘ audit refused or ⚠ audit failed. Each item in the report starts with a dot, ●, green when accepted as it is, yellow when allowed but changed by dockscreen or worth a look, red when refused or not checked; ⓘ marks a hint. The colours come from the terminal, as in docker's own output, so they show in any font; piped output and `NO_COLOR` get the symbols without colour.
 
-`--brief` prints only the verdict, in one line, such as `✅ passed` or `❌ refused: privileged is not allowed (+2 more)`. Output from docker itself, such as pull progress, still appears.
+`--brief` prints only the verdict, in one line, such as `✔ passed` or `✘ refused: privileged is not allowed (+2 more)`. Output from docker itself, such as pull progress, still appears.
 
 Images that start as root and drop privileges themselves, such as postgres or redis, usually need `--user`, `user:` or a `user` in their image section of the config file.
 

@@ -19,11 +19,9 @@ class Verdict(enum.IntEnum):
     FAILED = 3
 
 
-# Emoji carry their colour themselves, so they show without terminal colour support.
-ICONS = {Verdict.PASSED: "\u2705", Verdict.REFUSED: "\u274c", Verdict.FAILED: "\u2757"}  # ✅ ❌ ❗
-GOOD = "\U0001f7e2"  # 🟢 accepted as it is
-WARN = "\U0001f7e1"  # 🟡 allowed, but changed by dockscreen or worth a look
-BAD = "\U0001f534"   # 🔴 refused, or could not be checked
+# Text symbols, as docker uses them; messages colours them on a terminal.
+GOOD, WARN, BAD, HINT = messages.GOOD, messages.WARN, messages.BAD, messages.HINT
+ICONS = {Verdict.PASSED: messages.PASSED, Verdict.REFUSED: messages.REFUSED, Verdict.FAILED: messages.FAILED}
 
 
 def dot(assessment):
@@ -35,26 +33,26 @@ def dot(assessment):
 
 def line(verdict, what="audit"):
     """The closing line of an audit or a screening: icon and verdict."""
-    return f"{ICONS[verdict]} {what} {verdict.name.lower()}"
+    return messages.marked(ICONS[verdict], f"{what} {verdict.name.lower()}")
 
 
 def brief(verdict, reasons):
-    """The verdict in one line, for --brief: `✅ passed`, or the verdict and its first reason."""
+    """The verdict in one line, for --brief: `✔ passed`, or the verdict and its first reason."""
     if verdict is Verdict.PASSED:
-        return f"{ICONS[verdict]} passed"
+        return messages.marked(ICONS[verdict], "passed")
     first = printable(reasons[0]) if reasons else "no reason given"
     more = f" (+{len(reasons) - 1} more)" if len(reasons) > 1 else ""
-    return f"{ICONS[verdict]} {verdict.name.lower()}: {first}{more}"
+    return messages.marked(ICONS[verdict], f"{verdict.name.lower()}: {first}{more}")
 
 
 def report(verdict, reasons, brief_mode=False, what="audit"):
     """Print the verdict: one line on stdout with brief_mode, else each reason and the closing line on
     stderr. Returns the exit status."""
     if brief_mode:
-        print(brief(verdict, reasons))
+        messages.out(brief(verdict, reasons))
         return int(verdict)
     for reason in reasons:
-        messages.notice(f"{BAD} refusing: {reason}" if verdict is Verdict.REFUSED else f"{BAD} {reason}")
+        messages.notice(messages.marked(BAD, f"refusing: {reason}" if verdict is Verdict.REFUSED else reason))
     messages.notice(line(verdict, what))
     return int(verdict)
 
