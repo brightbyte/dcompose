@@ -78,10 +78,11 @@ def out(text, indent=True):
         print(f"\t{line}")
 
 
-def report_width():
+def report_width(fallback=0):
     """The width to wrap report lines at: COLUMNS or the terminal's, at most MAX_WIDTH; None (no
-    wrapping) when neither is known, as when the output goes to grep, or below MIN_WIDTH."""
-    columns = shutil.get_terminal_size((0, 0)).columns  # 0: no COLUMNS, and not a terminal
+    wrapping) below MIN_WIDTH. fallback: the width when neither is known, as when the output goes to
+    grep or less; 0 for no wrapping."""
+    columns = shutil.get_terminal_size((fallback, 24)).columns
     return None if columns < MIN_WIDTH else min(columns, MAX_WIDTH)
 
 

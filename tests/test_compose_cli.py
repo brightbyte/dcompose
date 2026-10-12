@@ -46,22 +46,49 @@ def test_custom_name_as_option_value_is_not_dispatched(forwarded, monkeypatch):
     assert forwarded == [["-p", "fake", "ps"]]
 
 
-@pytest.mark.parametrize("argv, expect_help", [
-    ([], True),
-    (["help"], True),
-    (["--help"], True),
-    (["-f", "a.yml", "help"], True),
-    (["help", "up"], False),
-    (["up", "--help"], False),
-    (["ps"], False),
-])
-def test_dockscreen_help_precedes_forwarding(forwarded, capsys, argv, expect_help):
+@pytest.mark.parametrize("argv", [[], ["help"], ["--help"], ["-h"], ["-f", "a.yml", "help"]])
+def test_the_overview_precedes_composes_own_help(forwarded, capsys, argv):
     compose_cli.main(argv)
     assert forwarded == [argv]
     out = capsys.readouterr().out
-    assert ("dockscreen compose commands:" in out) == expect_help
-    if expect_help:
-        assert "audit" in out and "fix" in out
+    assert out.startswith("Usage:  dockscreen compose [OPTIONS] COMMAND")
+    assert "Commands dockscreen audits:" in out and "  up " in out
+    assert "Commands dockscreen adds:" in out and "  harden " in out
+    assert out.rstrip().endswith("Docker Compose's own help follows:")
+
+
+@pytest.mark.parametrize("argv, forwarded_argv", [
+    (["up", "--help"], ["up", "--help"]),
+    (["up", "-h"], ["up", "-h"]),
+    (["-f", "a.yml", "help", "up"], ["-f", "a.yml", "up", "--help"]),
+])
+def test_a_command_compose_has_gets_our_help_then_composes(forwarded, capsys, argv, forwarded_argv):
+    compose_cli.main(argv)
+    assert forwarded == [forwarded_argv]
+    out = capsys.readouterr().out
+    assert out.startswith("Usage:  dockscreen compose up [OPTIONS]")
+    assert "dockscreen audits the project first" in out
+
+
+@pytest.mark.parametrize("argv", [["help", "harden"], ["harden", "--help"], ["fix", "-h"], ["help", "fix"]])
+def test_our_own_commands_get_only_our_help(forwarded, capsys, argv):
+    assert compose_cli.main(argv) == 0
+    assert forwarded == []  # compose does not know harden
+    out = capsys.readouterr().out
+    assert out.startswith("Usage:  dockscreen compose harden")
+    assert "Aliases:\n  dockscreen compose harden, dockscreen compose fix" in out
+
+
+@pytest.mark.parametrize("argv", [["ps", "--help"], ["help", "ps"]])
+def test_commands_dockscreen_leaves_alone_get_composes_help(forwarded, capsys, argv):
+    compose_cli.main(argv)
+    assert forwarded == [["ps", "--help"]]
+    assert capsys.readouterr().out == ""
+
+
+def test_help_after_the_service_belongs_to_its_command(forwarded, monkeypatch):
+    monkeypatch.setattr(composerun, "run", lambda argv, idx, runtime, allow_me: 0)
+    assert compose_cli.main(["run", "app", "grep", "--help"]) == 0  # screened and run, not help
 
 
 @pytest.mark.parametrize("subcommand", sorted(compose_cli.RUNTIME_SUBCOMMANDS))
@@ -101,19 +128,31 @@ def test_unscreened_subcommand_is_not_inspected(forwarded, monkeypatch):
     assert forwarded == [["ps"]]
 
 
+@pytest.mark.parametrize("argv, help_for", [
+    (["up"], None),
+    (["run", "app", "ls", "-h"], None),
+    (["run", "app", "grep", "-h", "foo"], None),
+    (["run", "app", "--help"], None),
+    (["run", "-e", "--help", "app"], None),  # a flag value, not a help request
+    (["up", "-d", "--help"], None),
+    (["up", "-h"], "up"),
+    (["up", "--help"], "up"),
+    (["run", "--help"], "run"),
+    (["help", "watch"], "watch"),
+    (["help"], ""),
+    (["ps"], None),
+    (["logs", "-f"], None),
+    ([], ""),
+])
+def test_help_request(argv, help_for):
+    assert compose_cli.help_request(argv, argscan.find_subcommand(argv, compose_cli.GLOBAL_OPTS_WITH_VALUE)) \
+        == help_for
+
+
 @pytest.mark.parametrize("argv, screened", [
     (["up"], True),
     (["run", "app", "ls", "-h"], True),
-    (["run", "app", "grep", "-h", "foo"], True),
-    (["run", "app", "--help"], True),
-    (["run", "-e", "--help", "app"], True),  # a flag value, not a help request
-    (["up", "-d", "--help"], True),
-    (["up", "-h"], True),
-    (["up", "--help"], False),
-    (["run", "--help"], False),
-    (["watch", "--help"], False),
     (["ps"], False),
-    (["logs", "-f"], False),
     ([], False),
 ])
 def test_is_screened(argv, screened):

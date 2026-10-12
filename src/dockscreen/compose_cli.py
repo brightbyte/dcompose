@@ -14,6 +14,7 @@ from dockscreen import (
     composerun,
     config,
     flags,
+    helptext,
     hostusers,
     ids,
     messages,
@@ -82,6 +83,9 @@ def dispatch(argv, runtime=None):
     ids.export(runtime.env, runtime.me)
 
     idx = argscan.find_subcommand(argv, GLOBAL_OPTS_WITH_VALUE)
+    target = help_request(argv, idx)
+    if target is not None:
+        return show_help(target, argv, idx, runtime)
     if idx is not None and argv[idx] in COMMANDS:
         return COMMANDS[argv[idx]](global_args=argv[:idx], args=argv[idx + 1:], runtime=runtime,
                                    allow_me=allow_me)
@@ -91,14 +95,11 @@ def dispatch(argv, runtime=None):
             return composerun.run(argv, idx, runtime, allow_me=allow_me)
         if not screen.passes(argv[:idx], runtime, policy.check_build_config):
             return 1
-    elif idx is not None and argv[idx] == "exec" and argv[idx + 1:idx + 2] != ["--help"]:
+    elif idx is not None and argv[idx] == "exec":
         args = rewrite_exec("exec", argv[idx + 1:], runtime)
         if args is None:
             return 1
         argv = [*argv[:idx + 1], *args]
-
-    if wants_help(argv, idx):
-        print_help()
 
     forward(argv, runtime)
 
@@ -119,51 +120,42 @@ def rewrite_exec(kind, args, runtime):
 
 
 def is_screened(argv, idx):
-    """Whether screening must run: SCREENED_SUBCOMMANDS, unless compose only prints help.
+    """Whether screening must run: SCREENED_SUBCOMMANDS (help_request has taken out help)."""
+    return idx is not None and argv[idx] in SCREENED_SUBCOMMANDS
 
-    Only a leading --help counts. After `run <service>` the rest belongs to the
-    command (`run app grep -h x`), and flag values can look like options, so
-    anywhere else screening runs. `up -h` is therefore screened too, at worst a
-    needless refusal.
+
+def help_request(argv, idx):
+    """What help argv asks for: None for none, "" for the overview, else a command's name.
+
+    `help`, `help COMMAND`, or --help or -h as the first argument after the command. Only a leading one
+    counts: after `run SERVICE` the rest belongs to the service's command (`run app grep -h x`).
     """
-    if idx is None or argv[idx] not in SCREENED_SUBCOMMANDS:
-        return False
-    return argv[idx + 1:idx + 2] != ["--help"]
-
-
-def wants_help(argv, idx):
-    """True for no arguments, `help` or `--help`; `help <subcommand>` is compose's alone."""
     if idx is None:
-        return not argv or "--help" in argv or "-h" in argv
-    return argv[idx] == "help" and idx == len(argv) - 1
+        return "" if not argv or "--help" in argv or "-h" in argv else None
+    if argv[idx] == "help":
+        return argv[idx + 1] if idx + 1 < len(argv) else ""
+    return argv[idx] if argv[idx + 1:idx + 2] in (["--help"], ["-h"]) else None
 
 
-def print_help():
-    lines = [
-        "dockscreen compose: docker compose with security checks and extra subcommands.",
-        "Everything else is forwarded to docker compose unchanged.",
-        "",
-        f"{', '.join(sorted(RUNTIME_SUBCOMMANDS))} refuse to run if the config mounts paths outside",
-        "the project directory, runs as root, as an account of this host or (with mounts) outside the",
-        "nobody range, or asks for extra privileges. They run the project from the checked config, with",
-        "cap_drop ALL and no-new-privileges added to every service that lacks them.",
-        f"{flags.ALLOW_ME}, before the subcommand, allows services to run as you.",
-        f"{', '.join(sorted(BUILD_SUBCOMMANDS))} refuse builds that read outside the project, use the",
-        "host network, run privileged or forward your SSH agent. See `dockscreen compose audit`.",
-        f"{flags.SKIP_SCREENING}, before the subcommand, turns all of this off.",
-        "",
-        "dockscreen compose commands:",
-    ]
-    for name, fn in sorted(COMMANDS.items()):
-        if name in ALIASES:
-            continue
-        summary = (fn.__doc__ or "").strip().splitlines()[0] if fn.__doc__ else ""
-        also = [alias for alias, primary in ALIASES.items() if primary == name]
-        lines.append(f"  {name:<10}{summary}" + (f" (also: {', '.join(also)})" if also else ""))
-    lines += ["", "docker compose help follows.", ""]
-    # flush: exec in forward() discards unflushed buffers
-    print("\n".join(lines), flush=True)
+def show_help(target, argv, idx, runtime):
+    """Print dockscreen's help for target, then compose's own if compose has the command too."""
+    if target == "":
+        helptext.show(lambda width: helptext.compose_overview(own_commands(), width))
+        return forward(argv, runtime)
+    if target in COMMANDS:
+        helptext.show(lambda width: helptext.topic(own_commands()[ALIASES.get(target, target)], "", width))
+        return 0
+    if target in helptext.COMPOSE:
+        helptext.show(lambda width: helptext.topic(helptext.COMPOSE[target], "Docker Compose's own", width))
+    if idx is not None and argv[idx] == "help":
+        argv = [*argv[:idx], target, "--help"]
+    return forward(argv, runtime)
 
+
+def own_commands():
+    """{name: Topic} of dockscreen's own compose commands, aliases folded in."""
+    return {name: helptext.command_topic(name, fn, [a for a, p in ALIASES.items() if p == name])
+            for name, fn in sorted(COMMANDS.items()) if name not in ALIASES}
 
 if __name__ == "__main__":
     sys.exit(main())

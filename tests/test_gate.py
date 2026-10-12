@@ -322,20 +322,50 @@ def test_compose_is_routed_to_dockscreen(routed):
     assert routed == [("compose", ["-f", "a.yml", "up"])]
 
 
-@pytest.mark.parametrize("argv, expect_help", [
-    ([], True),
-    (["--help"], True),
-    (["-h"], True),
-    (["ps"], False),
-    (["run", "--help"], False),  # docker's own help for the subcommand
-])
-def test_dockscreen_help_precedes_dockers(routed, capsys, argv, expect_help):
+@pytest.mark.parametrize("argv", [[], ["--help"], ["-h"], ["help"]])
+def test_the_overview_precedes_dockers_own_help(routed, capsys, argv):
     docker_cli.main(argv)
     assert routed == [("exec", argv)]
     out = capsys.readouterr().out
-    assert ("dockscreen: docker with security checks" in out) == expect_help
-    if expect_help:
-        assert "dockscreen compose --help" in out
+    assert out.startswith("Usage:  dockscreen [OPTIONS] COMMAND")
+    assert "--strict-screen" in out and "  run " in out and "  compose " in out
+    assert out.rstrip().endswith("Docker's own help follows:")
+
+
+@pytest.mark.parametrize("argv, routed_argv", [
+    (["run", "--help"], ["run", "--help"]),
+    (["help", "run"], ["run", "--help"]),
+    (["container", "start", "--help"], ["container", "start", "--help"]),
+    (["start", "-h"], ["start", "-h"]),
+])
+def test_a_command_dockscreen_audits_gets_our_help_then_dockers(routed, capsys, argv, routed_argv):
+    docker_cli.main(argv)
+    assert routed == [("exec", routed_argv)]
+    assert capsys.readouterr().out.startswith("Usage:  dockscreen ")
+
+
+def test_run_dash_h_is_the_hostname_as_in_docker(routed, capsys):
+    docker_cli.main(["run", "-h"])
+    assert capsys.readouterr().out == ""  # not help: run is attempted, and docker says what is missing
+
+
+@pytest.mark.parametrize("argv", [["audit", "--help"], ["help", "audit"], ["audit", "-h"]])
+def test_audit_gets_only_our_help(routed, capsys, argv):
+    assert docker_cli.main(argv) == 0
+    assert routed == []
+    out = capsys.readouterr().out
+    assert out.startswith("Usage:  dockscreen [--allow-me] [--strict-screen] audit") and "Exit status" in out
+
+
+@pytest.mark.parametrize("argv", [["help", "ps"], ["ps", "--help"]])
+def test_commands_dockscreen_leaves_alone_get_dockers_help(routed, capsys, argv):
+    docker_cli.main(argv)
+    assert routed == [("exec", ["ps", "--help"])] and capsys.readouterr().out == ""
+
+
+def test_help_compose_is_the_compose_help(routed, capsys):
+    docker_cli.main(["help", "compose", "up"])
+    assert routed == [("compose", ["help", "up"])]
 
 
 def test_docker_options_before_compose_are_refused(routed, capsys):

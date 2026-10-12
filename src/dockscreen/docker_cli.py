@@ -13,6 +13,7 @@ from dockscreen import (
     config,
     flags,
     gate,
+    helptext,
     hostusers,
     imagedecision,
     messages,
@@ -58,8 +59,10 @@ def dispatch(argv):
         return messages.refuse([f"{flags.STRICT_SCREEN} is only supported for audit so far"])
     if idx is None:
         if not argv or "--help" in argv or "-h" in argv:
-            print_help()
+            helptext.show(helptext.docker_overview)
         return passthrough(argv, runtime)
+    if argv[idx] == "help":
+        return show_help(argv[idx + 1:], argv, runtime)
 
     if argv[idx] == "compose":
         if idx != 0:
@@ -70,6 +73,8 @@ def dispatch(argv):
     sub, end = argv[idx], idx
     if sub == "container" and idx + 1 < len(argv) and argv[idx + 1] in GATED - {"audit"}:
         sub, end = argv[idx + 1], idx + 1
+    if wants_command_help(sub, argv[end + 1:]):
+        return show_command_help(sub, argv, runtime)
     if sub not in GATED:
         return passthrough(argv, runtime)
     return gated(argv, sub, idx, end, runtime, allow_me, strict)
@@ -77,13 +82,12 @@ def dispatch(argv):
 
 def gated(argv, sub, idx, end, runtime, allow_me=False, strict=False):
     lead, args = argv[:end + 1], argv[end + 1:]
-    if sub == "audit":
-        if not args or args[:1] == ["--help"]:
-            messages.notice(gate.AUDIT_USAGE)
-            messages.notice("Say what `docker run` with these arguments would do, without starting anything.")
-            return 2
-    elif args[:1] == ["--help"] or (sub in ("run", "create") and not args):
-        return passthrough(argv, runtime)
+    if sub == "audit" and not args:
+        messages.notice(gate.AUDIT_USAGE)
+        messages.notice("Run 'dockscreen audit --help' for more.")
+        return 2
+    if sub in ("run", "create") and not args:
+        return passthrough(argv, runtime)  # docker says what is missing
     if sub == "create":
         try:
             resolved = gate.create_args(args, runtime)
@@ -108,26 +112,29 @@ def gated(argv, sub, idx, end, runtime, allow_me=False, strict=False):
     return passthrough(argv, runtime)
 
 
-def print_help():
-    lines = [
-        "dockscreen: docker with security checks. Everything else is forwarded to docker unchanged.",
-        "",
-        "compose runs docker compose on projects that pass the checks; see `dockscreen compose --help`.",
-        "run checks the user an image runs as: root becomes the default user (nobody unless configured),",
-        "and an account of this host, or with mounts an id outside the nobody range, is refused. start and",
-        "restart refuse containers that would fail that check. create and run add --cap-drop=ALL and",
-        "no-new-privileges. audit takes the arguments of run and says what run would do, without",
-        "starting anything; audit --brief says only passed, refused or failed.",
-        f"{flags.ALLOW_ME}, before the subcommand, allows containers to run as you.",
-        f"{flags.STRICT_SCREEN}, before audit, also fails it for what the command line asks for that a",
-        "project or an image may not have.",
-        f"{flags.SKIP_SCREENING}, before the subcommand, turns all of this off.",
-        "",
-        "docker help follows.",
-        "",
-    ]
-    # flush: exec in passthrough() discards unflushed buffers
-    print("\n".join(lines), flush=True)
+def show_help(rest, argv, runtime):
+    """`help` and `help COMMAND`: dockscreen's help, then docker's own."""
+    if not rest:
+        helptext.show(helptext.docker_overview)
+        return passthrough(argv, runtime)
+    if rest[0] == "compose":
+        return compose_cli.main(["help", *rest[1:]], runtime)
+    return show_command_help(rest[0], [rest[0], "--help"], runtime)
+
+
+def wants_command_help(sub, args):
+    """--help, or -h, as the first argument after the command. For run and create, -h is --hostname."""
+    return args[:1] == ["--help"] or (args[:1] == ["-h"] and sub not in ("run", "create"))
+
+
+def show_command_help(name, argv, runtime):
+    """dockscreen's help for the command, if it audits or adds it, then docker's own (argv asks for it)."""
+    topic = helptext.DOCKER.get(name)
+    if topic is not None:
+        helptext.show(lambda width: helptext.topic(topic, "Docker's own", width))
+        if not topic.docker_help:
+            return 0
+    return passthrough(argv, runtime)
 
 
 def passthrough(argv, runtime):
