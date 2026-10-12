@@ -445,6 +445,13 @@ def test_first_file_of_tar():
 
 # --- docker audit ---------------------------------------------------------
 
+def report(out):
+    """The report lines, each of which comes after a tab."""
+    lines = out.splitlines()
+    assert all(line.startswith("\t") for line in lines)
+    return [line[1:] for line in lines]
+
+
 def audit(docker, *args):
     return gate.audit(ctx(docker), list(args))
 
@@ -456,7 +463,7 @@ def audit_with(docker, settings, *args):
 def test_audit_without_mounts_creates_the_container_as_run_would_and_never_starts_it(capsys):
     docker = FakeDocker(image_user="app")
     assert audit(docker, "img") == 0
-    assert capsys.readouterr().out.splitlines() == [
+    assert report(capsys.readouterr().out) == [
         f"{GOOD} image img: runs as uid 100000 (no local user), gid 100001 (no local group); accepted",
         "  docker run would create it again with --user=100000:100001, as numbers",
         "  docker run also adds --cap-drop=ALL --security-opt=no-new-privileges:true; "
@@ -476,7 +483,7 @@ def test_audit_with_mounts_judges_the_image_user_with_them(capsys):
 
 def test_audit_of_a_root_image_says_it_runs_as_the_default_user(capsys):
     assert audit(FakeDocker(image_user=""), "img") == 0
-    out = capsys.readouterr().out.splitlines()
+    out = report(capsys.readouterr().out)
     assert out[0] == (f"{WARN} image img: would run as uid 0 (local user root), gid 0 (local group root); "
                       "docker run would run it as the default user (65534:65534) instead")
     assert out[1] == "  docker run would create it again with --user=65534:65534, as numbers"
@@ -528,7 +535,7 @@ def test_audit_points_out_what_a_project_could_not_ask_for(monkeypatch, tmp_path
 
     assert audit(docker, "img") == 0  # run would still start it: the command line is trusted
 
-    findings = [line for line in capsys.readouterr().out.splitlines() if "command line:" in line]
+    findings = [line for line in report(capsys.readouterr().out) if "command line:" in line]
     assert findings == [
         f"{WARN} command line: security_opt 'label=disable' is not allowed; "
         "if bind mounts fail on SELinux, add the :z or :Z mount option instead",
@@ -765,7 +772,7 @@ def test_an_image_sections_security_opts_apply_to_what_audit_points_out(digests,
     docker = FakeDocker(image_user="nobody", repo_digests=digests, info_extra={"HostConfig": host})
     audit_with(docker, settings, "img")
     out = capsys.readouterr().out
-    assert [line[2:] for line in out.splitlines() if "command line:" in line] == findings
+    assert [line[2:] for line in report(out) if "command line:" in line] == findings
 
 
 def test_audit_does_not_point_out_a_user_the_config_file_sets_for_the_image(capsys):

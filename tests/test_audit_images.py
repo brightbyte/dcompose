@@ -24,6 +24,13 @@ def setup(monkeypatch, tmp_path, config, images, **kwargs):
     return recorder
 
 
+def report(out):
+    """The report lines, each of which comes after a tab."""
+    lines = out.splitlines()
+    assert all(line.startswith("\t") for line in lines)
+    return [line[1:] for line in lines]
+
+
 def pulls(recorder):
     return [cmd[-2:] for cmd in recorder.children if "pull" in cmd]
 
@@ -42,7 +49,7 @@ def test_audit_pulls_and_says_what_happens_to_each_service_without_a_user(monkey
     # said before the pulling starts, on stderr so that the report on stdout stays clean
     assert captured.err.index("pulling or building the images") < captured.err.index("audit passed")
     assert "pulling or building" not in captured.out
-    assert captured.out.splitlines() == [
+    assert report(captured.out) == [
         (f"{GOOD} service db: no user set; image db:1 runs as uid 100000 (no local user), "
          "gid 100001 (no local group); accepted"),
         (f"{WARN} service web: no user set; image web:1 would run as root; dockscreen runs it as the "

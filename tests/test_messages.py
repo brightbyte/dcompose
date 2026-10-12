@@ -70,5 +70,17 @@ def test_no_colour_when_piped_or_asked_not_to(monkeypatch, capsys):
 
 
 def test_report_lines_are_escaped_before_they_are_painted(capsys):
-    messages.out("✘ evil\x1b[2J")
-    assert capsys.readouterr().out == "✘ evil\\x1b[2J\n"
+    messages.out(messages.marked(messages.BAD, "evil\x1b[2J"))
+    assert capsys.readouterr().out == "\t\u25cf evil\\x1b[2J\n"  # a report line: after a tab
+
+
+def test_untrusted_text_is_escaped_in_coloured_lines_too(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm")
+    line = messages.marked(messages.BAD, "evil\x1b[2J")
+    assert messages.paint(line, Terminal()) == "\x1b[1;31m\u25cf\x1b[0m evil\\x1b[2J"
+
+
+def test_a_line_that_is_all_of_the_output_has_no_tab(capsys):
+    messages.out(messages.marked(messages.PASSED, "passed"), indent=False)
+    assert capsys.readouterr().out == "\u2714 passed\n"

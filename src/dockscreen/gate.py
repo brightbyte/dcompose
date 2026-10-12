@@ -188,7 +188,7 @@ def audit(ctx, args, strict=False):
 
     outcome, reasons = audit_verdict(ctx, assessment, found, strict, parsed.image)
     if brief:
-        messages.out(verdict.brief(outcome, reasons))
+        messages.out(verdict.brief(outcome, reasons), indent=False)
     else:
         report_assessment(ctx, parsed.image, assessment)
         report_findings(found, strict)
@@ -220,8 +220,8 @@ def report_assessment(ctx, image, assessment):
             messages.out(messages.marked(verdict.HINT, config_hint(ctx, image)))
         return
     if assessment.pins_user:
-        print(f"  docker run would create it again with --user={pinned_user(assessment)}, as numbers")
-    print("  docker run also adds " + " ".join(DEFAULTS) + "; later options override them")
+        messages.out(f"  docker run would create it again with --user={pinned_user(assessment)}, as numbers")
+    messages.out("  docker run also adds " + " ".join(DEFAULTS) + "; later options override them")
 
 
 def report_findings(found, strict):

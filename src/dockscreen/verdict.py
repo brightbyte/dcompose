@@ -49,7 +49,7 @@ def report(verdict, reasons, brief_mode=False, what="audit"):
     """Print the verdict: one line on stdout with brief_mode, else each reason and the closing line on
     stderr. Returns the exit status."""
     if brief_mode:
-        messages.out(brief(verdict, reasons))
+        messages.out(brief(verdict, reasons), indent=False)
         return int(verdict)
     for reason in reasons:
         messages.notice(messages.marked(BAD, f"refusing: {reason}" if verdict is Verdict.REFUSED else reason))

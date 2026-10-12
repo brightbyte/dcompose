@@ -55,9 +55,13 @@ def notice(text):
     print(f"{PREFIX} {paint(text, sys.stderr)}", file=sys.stderr)
 
 
-def out(text):
-    """A line of a report on stdout, escaped and with its mark coloured."""
-    print(paint(text, sys.stdout))
+def out(text, indent=True):
+    """A line of a report on stdout, escaped and with its mark coloured.
+
+    indent: after a tab, which sets the report apart from the [dockscreen] messages on stderr that
+    interleave with it. A line that is all of the output (--brief) goes without.
+    """
+    print(("\t" if indent else "") + paint(text, sys.stdout))
 
 
 def paint(line, stream):
