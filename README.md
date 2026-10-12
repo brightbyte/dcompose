@@ -20,6 +20,8 @@ For `dockscreen compose`: `up`, `create`, `run`, `watch`, `scale` and `alpha` re
 
 `build` and `bake` only check what building can reach: no SSH agent, no host network or privileged builds, and contexts and secrets inside the project.
 
+Every command dockscreen screens ends its output with the verdict, right before docker or compose takes over: ✅ screening passed, ❌ screening refused, or ❗ screening failed when it could not look (the image did not pull, the config did not parse). If `up` or `run` does not show that line, dockscreen was not in the path. Commands it passes on unchecked (`ps`, `logs`, `exec` …) print nothing.
+
 When refusing, dockscreen says why. `dockscreen compose harden` prints a compose override file that fixes what can be fixed.
 
 ## Users

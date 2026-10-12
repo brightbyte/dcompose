@@ -1,4 +1,4 @@
-"""The outcome of an audit, which is also its exit status.
+"""The outcome of an audit, which is also its exit status, and of the screening before a command runs.
 
 Refused means the policy says no. Failed means the audit could not get far enough to judge: docker,
 the image or the compose config was not there, or pulling or building failed. A refusal is about the
@@ -33,9 +33,9 @@ def dot(assessment):
     return GOOD if assessment.kind in (Kind.OK, Kind.CONFIGURED) else WARN
 
 
-def line(verdict):
-    """The closing line of an audit: icon and verdict."""
-    return f"{ICONS[verdict]} audit {verdict.name.lower()}"
+def line(verdict, what="audit"):
+    """The closing line of an audit or a screening: icon and verdict."""
+    return f"{ICONS[verdict]} {what} {verdict.name.lower()}"
 
 
 def brief(verdict, reasons):
@@ -47,7 +47,7 @@ def brief(verdict, reasons):
     return f"{ICONS[verdict]} {verdict.name.lower()}: {first}{more}"
 
 
-def report(verdict, reasons, brief_mode=False):
+def report(verdict, reasons, brief_mode=False, what="audit"):
     """Print the verdict: one line on stdout with brief_mode, else each reason and the closing line on
     stderr. Returns the exit status."""
     if brief_mode:
@@ -55,5 +55,15 @@ def report(verdict, reasons, brief_mode=False):
         return int(verdict)
     for reason in reasons:
         messages.notice(f"{BAD} refusing: {reason}" if verdict is Verdict.REFUSED else f"{BAD} {reason}")
-    messages.notice(line(verdict))
+    messages.notice(line(verdict, what))
     return int(verdict)
+
+
+def screened(reasons, failed=False):
+    """Report the screening of a command, just before it runs or instead: True if it may run.
+
+    reasons: why it may not; failed: the reasons are failures to look, not refusals.
+    """
+    outcome = Verdict.FAILED if failed else Verdict.REFUSED if reasons else Verdict.PASSED
+    report(outcome, reasons, what="screening")
+    return outcome is Verdict.PASSED

@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 
-from dockscreen import argscan, config, images, messages, policy
+from dockscreen import argscan, config, images, policy, verdict
 
 COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 COMPOSE_VARS_IN_ENV_FILE = re.compile(r"^\s*(export\s+)?COMPOSE_(FILE|PATH_SEPARATOR)\s*=", re.MULTILINE)
@@ -36,13 +36,6 @@ def inspect(global_args, runtime):
     return load_config(global_args, runtime.docker.binary), project_dir
 
 
-def check(global_args, runtime, rules=policy.check_config):
-    """Return the problems rules(config, ctx) finds; failure to inspect counts as a problem."""
-    try:
-        config, project_dir = inspect(global_args, runtime)
-        return rules(config, context(project_dir, runtime))
-    except ScreenError as e:
-        return [str(e)]
 
 
 def context(project_dir, runtime, allow_me=False, verified=None):
@@ -91,8 +84,14 @@ def mount_dir_warnings(runtime):
 
 
 def passes(global_args, runtime, rules=policy.check_config):
-    """check(), reporting problems on stderr."""
-    return messages.report(check(global_args, runtime, rules))
+    """Whether rules(config, ctx) finds nothing, with the screening verdict on stderr."""
+    try:
+        config, project_dir = inspect(global_args, runtime)
+    except InspectError as e:
+        return verdict.screened([str(e)], failed=True)
+    except ScreenError as e:
+        return verdict.screened([str(e)])
+    return verdict.screened(rules(config, context(project_dir, runtime)))
 
 
 def load_config(global_args, docker_binary):

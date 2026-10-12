@@ -128,7 +128,8 @@ def test_an_image_that_is_already_nobody_is_accepted_with_mounts():
 def test_a_user_on_the_command_line_is_all_a_mounting_container_needs(capsys):
     docker = FakeDocker(image_user="pg", container_user="998:998", info_extra=BIND)
     assert gate.run(ctx(docker), ["--user", "998:998", "-v", "/p:/p", "img"]) == 42
-    assert docker.names().count("create") == 1 and capsys.readouterr().err == ""
+    assert docker.names().count("create") == 1
+    assert capsys.readouterr().err == "[dockscreen] \u2705 screening passed\n"  # nothing but the verdict
 
 
 def test_root_with_mounts_runs_as_the_default_user(capsys):
@@ -162,7 +163,7 @@ def test_a_configured_image_user_replaces_the_images_own(capsys):
     assert gate.run(ctx(docker, IMG_USERS), ["img"]) == 42
 
     assert docker.calls[3][1][:3] == [*DEFAULTS, "--user=999:999"]  # root included, mounts or not
-    assert capsys.readouterr().err == ""  # configured: no notice
+    assert capsys.readouterr().err == "[dockscreen] \u2705 screening passed\n"  # configured: no notice
 
 
 def test_a_configured_user_needs_the_image_to_have_been_pulled_from_that_repository(capsys):
@@ -603,7 +604,8 @@ def test_run_refuses_what_audit_calls_failed(capsys):
     docker = FakeDocker()
     docker.inspect_container = lambda ref: (_ for _ in ()).throw(DockerError("boom"))
     assert gate.run(ctx(docker), ["img"]) == 1  # not started: a failure to look is not a pass
-    assert "refusing: boom" in capsys.readouterr().err
+    assert capsys.readouterr().err.splitlines() == [
+        f"[dockscreen] {BAD} boom", "[dockscreen] \u2757 screening failed"]
 
 
 # --- docker audit routing ---------------------------------------------------
@@ -772,3 +774,14 @@ def test_audit_does_not_point_out_a_user_the_config_file_sets_for_the_image(caps
                         info_extra=BIND)  # with mounts, 900 is only allowed because the config says so
     assert audit_with(docker, settings, "--user", "900:900", "-v", "/p:/p", "img") == 0
     assert "command line: user" not in capsys.readouterr().out
+
+
+def test_start_ends_with_the_verdict_before_docker_runs(routed, capsys):
+    assert docker_cli.main(["start", "c1"]) == 0
+    assert routed == [("exec", ["start", "c1"])]
+    assert capsys.readouterr().err == "[dockscreen] \u2705 screening passed\n"
+
+
+def test_commands_that_are_not_screened_say_nothing(routed, capsys):
+    docker_cli.main(["ps"])
+    assert routed == [("exec", ["ps"])] and capsys.readouterr().err == ""

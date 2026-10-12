@@ -31,7 +31,9 @@ from dockscreen import (
     policy,
     screen,
     shellenv,
+    verdict,
 )
+from dockscreen.dockerclient import DockerNotFound
 
 # Options that select the files and the project; ours replace them.
 REPLACED_OPTIONS = ("--file", "-f", "--project-directory", "--project-name", "-p")
@@ -102,9 +104,13 @@ def run(argv, idx, runtime, tools=None, allow_me=False):
         parsed = command_line(argv[idx], argv[idx + 1:], runtime)
         project = load_project(argv[:idx], runtime, allow_me, tools)
         problems = project.problems()
+    except (screen.InspectError, DockerNotFound) as e:
+        verdict.screened([str(e)], failed=True)
+        return 1
     except (screen.ScreenError, hostusers.UserError, ValueError) as e:
         problems = [str(e)]
-    if not messages.report(problems):
+    if problems:
+        verdict.screened(problems)
         return 1
 
     hardened, tools = project.hardened, project.tools
@@ -115,14 +121,18 @@ def run(argv, idx, runtime, tools=None, allow_me=False):
     lines += shellenv.describe(hardened, runtime.env)
     with project.generated() as command:
         prepared = composeimages.prepare(command(hardened), hardened, parsed.args, tools, chosen(parsed))
-        if not messages.report(prepared.problems):
+        if prepared.problems:
+            verdict.screened(prepared.problems, failed=prepared.failed)
             return 1
         final, vetted = composeimages.finalize(hardened, prepared, tools.gate_ctx)
-        if not messages.report(policy.check_config(final, project.final_ctx(prepared, vetted))):  # what runs
+        problems = policy.check_config(final, project.final_ctx(prepared, vetted))  # what will run
+        if problems:
+            verdict.screened(problems)
             return 1
         for line in [*lines, *composeimages.notices(prepared)]:
             if line:
                 messages.notice(line)
+        verdict.screened([])
         return tools.run_child([*command(final), argv[idx], *parsed.args])
 
 

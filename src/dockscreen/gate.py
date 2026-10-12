@@ -67,9 +67,11 @@ def run(ctx, args):
     try:
         parsed = runargs.parse(args, ctx.runtime.me, ctx.runtime.resolve_account)
     except runargs.ParseError as e:
-        return messages.refuse([f"cannot read the command line: {e}; use the real docker for this one"])
+        verdict.screened([f"cannot read the command line: {e}; use the real docker for this one"])
+        return 1
     except hostusers.UserError as e:
-        return messages.refuse([str(e)])
+        verdict.screened([str(e)])
+        return 1
     for message in [*parsed.notices, root_default_notice(ctx)]:
         if message:
             messages.notice(message)
@@ -91,6 +93,7 @@ def run(ctx, args):
             return created
         container, info, assessment = created
 
+    verdict.screened([])
     return ctx.docker.start(
         container,
         attach=not parsed.detach,
@@ -111,11 +114,13 @@ def create_checked(ctx, parsed, extra):
     which re-creates the container with the user as numbers.
     """
     code, container, info, assessment = create_assessed(ctx, parsed, extra)
-    if container is None:
+    if container is None:  # docker said why
+        verdict.screened([f"docker could not create a container for {parsed.image}"], failed=True)
         return code
     if assessment.refused:
         ctx.docker.remove(container)
-        return messages.refuse(explain(ctx, assessment, parsed.image))
+        verdict.screened(explain(ctx, assessment, parsed.image), failed=assessment.failed)
+        return 1
     return container, info, assessment
 
 

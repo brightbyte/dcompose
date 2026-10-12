@@ -17,9 +17,11 @@ from dockscreen import (
     imagedecision,
     messages,
     screen,
+    verdict,
 )
 from dockscreen.dockerclient import DockerNotFound
 from dockscreen.runtime import load_runtime
+from dockscreen.verdict import Verdict
 
 # Global `docker` options that consume the following token as their value.
 DOCKER_OPTS_WITH_VALUE = frozenset({
@@ -94,15 +96,17 @@ def gated(argv, sub, idx, end, runtime, allow_me=False, strict=False):
 
     docker = runtime.docker
     if screen.is_remote(argv[:idx], runtime.env, docker):
-        return messages.refuse([screen.REMOTE_MESSAGE])
+        what = "audit" if sub == "audit" else "screening"
+        return verdict.report(Verdict.REFUSED, [screen.REMOTE_MESSAGE], what=what)
 
     ctx = imagedecision.Context(docker, runtime.rules(allow_me), runtime)
     if sub == "run":
         return gate.run(ctx, args)
     if sub == "audit":
         return gate.audit(ctx, args, strict)
-    problems = gate.check_existing(ctx, args)
-    return messages.refuse(problems) if problems else passthrough(argv, runtime)
+    if not verdict.screened(gate.check_existing(ctx, args)):
+        return 1
+    return passthrough(argv, runtime)
 
 
 def print_help():
