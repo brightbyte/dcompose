@@ -11,7 +11,9 @@ symbol can stand for different things in different colours.
 """
 
 import os
+import shutil
 import sys
+import textwrap
 
 from dockscreen.text import printable
 
@@ -47,6 +49,13 @@ REFUSED = Mark("\u2718", RED)   # ✘
 FAILED = Mark("\u26a0", YELLOW)  # ⚠ could not look
 
 
+# Report lines are wrapped to the terminal, but never wider than MAX_WIDTH, and not at all on a
+# terminal narrower than MIN_WIDTH, or without one. A tab is TAB_WIDTH columns; continued lines line
+# up with the text after the mark.
+MAX_WIDTH, MIN_WIDTH, TAB_WIDTH = 120, 20, 8
+CONTINUATION = "  "
+
+
 def marked(mark, text):
     return Marked(mark, text)
 
@@ -59,16 +68,47 @@ def out(text, indent=True):
     """A line of a report on stdout, escaped and with its mark coloured.
 
     indent: after a tab, which sets the report apart from the [dockscreen] messages on stderr that
-    interleave with it. A line that is all of the output (--brief) goes without.
+    interleave with it, and wrapped to the terminal (report_width) with the text lined up after the
+    mark. A line that is all of the output (--brief) goes as it is.
     """
-    print(("\t" if indent else "") + paint(text, sys.stdout))
+    if not indent:
+        print(paint(text, sys.stdout))
+        return
+    for line in wrapped(text, report_width(), wants_colour(sys.stdout)):
+        print(f"\t{line}")
+
+
+def report_width():
+    """The width to wrap report lines at: COLUMNS or the terminal's, at most MAX_WIDTH; None (no
+    wrapping) when neither is known, as when the output goes to grep, or below MIN_WIDTH."""
+    columns = shutil.get_terminal_size((0, 0)).columns  # 0: no COLUMNS, and not a terminal
+    return None if columns < MIN_WIDTH else min(columns, MAX_WIDTH)
+
+
+def wrapped(text, width, colour):
+    """text as lines of at most width columns after a tab (TAB_WIDTH), continued under the text after
+    the mark (CONTINUATION). Words are never broken: a long path stays whole."""
+    lead = f"{text.mark} " if isinstance(text, Marked) else ""
+    body = printable(text.text if lead else text)
+    if width is None:
+        lines = [lead + body]
+    else:
+        lines = textwrap.wrap(lead + body, width=width - TAB_WIDTH, subsequent_indent=CONTINUATION,
+                              break_long_words=False, break_on_hyphens=False) or [""]
+    if lead and colour:
+        lines[0] = coloured(text.mark) + lines[0][len(text.mark):]
+    return lines
 
 
 def paint(line, stream):
     """line escaped (printable), with its mark coloured if stream is a terminal that wants colour."""
     if not isinstance(line, Marked) or not wants_colour(stream):
         return printable(line)
-    return f"\x1b[1;{line.mark.colour}m{line.mark}\x1b[0m {printable(line.text)}"  # bold, for all alike
+    return f"{coloured(line.mark)} {printable(line.text)}"
+
+
+def coloured(mark):
+    return f"\x1b[1;{mark.colour}m{mark}\x1b[0m"  # bold, for all alike
 
 
 def wants_colour(stream):

@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from dockscreen import messages
@@ -84,3 +86,43 @@ def test_untrusted_text_is_escaped_in_coloured_lines_too(monkeypatch):
 def test_a_line_that_is_all_of_the_output_has_no_tab(capsys):
     messages.out(messages.marked(messages.PASSED, "passed"), indent=False)
     assert capsys.readouterr().out == "\u2714 passed\n"
+
+
+LONG = messages.marked(messages.BAD, "refusing: service web: bind mount '/srv/some/rather/long/path' is "
+                                     "outside /home/me/src/shop; add it to mount_dirs")
+
+
+def test_report_lines_wrap_after_the_mark_and_keep_long_words(monkeypatch, capsys):
+    monkeypatch.setenv("COLUMNS", "60")
+    messages.out(LONG)
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("\t\u25cf refusing:")
+    assert all(line.startswith("\t  ") and line[3] != " " for line in lines[1:])  # a tab and two spaces
+    assert all(len(line.expandtabs(8)) <= 60 for line in lines if "/srv/" not in line)
+    assert any("'/srv/some/rather/long/path'" in line for line in lines)  # not broken
+    assert " ".join(line.strip() for line in lines) == str(LONG)
+
+
+@pytest.mark.parametrize("columns, width", [("200", 120), ("100", 100), ("19", None), ("20", 20)])
+def test_report_width(monkeypatch, columns, width):
+    monkeypatch.setenv("COLUMNS", columns)
+    assert messages.report_width() == width
+
+
+def test_without_a_terminal_reports_are_not_wrapped(monkeypatch):
+    # piped into grep: whole lines; COLUMNS still asks for wrapping, e.g. for less
+    monkeypatch.delenv("COLUMNS")
+    monkeypatch.setattr(messages.shutil, "get_terminal_size", lambda fallback: os.terminal_size(fallback))
+    assert messages.report_width() is None
+
+
+def test_wrapped_lines_keep_the_colour_on_the_mark_only():
+    lines = messages.wrapped(LONG, 60, colour=True)
+    assert lines[0].startswith("\x1b[1;31m●\x1b[0m refusing:")
+    assert not any("\x1b" in line for line in lines[1:])
+
+
+def test_brief_lines_are_not_wrapped(monkeypatch, capsys):
+    monkeypatch.setenv("COLUMNS", "40")
+    messages.out(LONG, indent=False)
+    assert capsys.readouterr().out == str(LONG) + "\n"

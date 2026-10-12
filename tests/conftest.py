@@ -59,3 +59,10 @@ def default_config(monkeypatch):
     monkeypatch.setattr(config, "load_current", lambda env, home, uid: config.Config())
     monkeypatch.setattr(idrules, "SUBUID_FILE", "/nonexistent/subuid")
     monkeypatch.setattr(idrules, "SUBGID_FILE", "/nonexistent/subgid")
+
+
+@pytest.fixture(autouse=True)
+def unwrapped_reports(monkeypatch):
+    """Report lines stay whole, whatever terminal runs the tests: COLUMNS below the minimum turns
+    wrapping off. Tests of the wrapping set the width themselves."""
+    monkeypatch.setenv("COLUMNS", "10")
