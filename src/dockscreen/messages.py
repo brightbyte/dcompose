@@ -45,8 +45,8 @@ WARN = Mark("\u25cf", YELLOW)   # ● allowed, but changed by dockscreen or wort
 BAD = Mark("\u25cf", RED)       # ● refused, or could not be checked
 HINT = Mark("\u24d8", BLUE)     # ⓘ how to get past something
 PASSED = Mark("\u2714", GREEN)  # ✔
-REFUSED = Mark("\u2718", RED)   # ✘
-FAILED = Mark("\u26a0", YELLOW)  # ⚠ could not look
+REFUSED = Mark("\u2296", RED)   # ⊖
+FAILED = Mark("\u2718", RED)    # ✘ could not look, as docker marks errors
 
 
 # Report lines are wrapped to the terminal, but never wider than MAX_WIDTH, and not at all on a

@@ -84,7 +84,7 @@ def test_a_failed_pull_fails_the_audit_rather_than_refusing(monkeypatch, capsys,
     setup(monkeypatch, tmp_path, config, FakeImages(users={}, local=set()), codes={"pull": 1})
     assert commands.audit([], [], runtime()) == 3
     assert capsys.readouterr().err.splitlines()[-2:] == [
-        f"[dockscreen] {BAD} docker compose pull web failed", "[dockscreen] \u26a0 audit failed"]
+        f"[dockscreen] {BAD} docker compose pull web failed", "[dockscreen] \u2718 audit failed"]
 
 
 def test_a_config_compose_cannot_read_fails_the_audit(monkeypatch, capsys):
@@ -92,7 +92,7 @@ def test_a_config_compose_cannot_read_fails_the_audit(monkeypatch, capsys):
         raise screen.InspectError("docker compose config failed:\nbad yaml")
     monkeypatch.setattr(screen, "inspect", unreadable)
     assert commands.audit([], ["--brief"], runtime()) == 3
-    assert capsys.readouterr().out == "\u26a0 failed: docker compose config failed:\\x0abad yaml\n"
+    assert capsys.readouterr().out == "\u2718 audit failed: docker compose config failed:\\x0abad yaml\n"
 
 
 def test_a_project_refused_before_inspection_is_refused_not_failed(monkeypatch, capsys):
@@ -109,8 +109,8 @@ def test_brief_prints_only_the_verdict(monkeypatch, capsys, tmp_path):
           active=("web", "db"))
     assert commands.audit([], ["--brief"], runtime()) == 1
     captured = capsys.readouterr()
-    assert captured.out == ("\u2718 refused: service db: image db:1: the image's uid 1000 exists on this "
-                            "host (local user daniel); the image's gid 1000 exists on this host "
+    assert captured.out == ("\u2296 denied by audit: service db: image db:1: the image's uid 1000 exists "
+                            "on this host (local user daniel); the image's gid 1000 exists on this host "
                             "(local group daniel); set user: to choose one, or set user under "
                             f'[images."db"] in {runtime().config_file}\n')
     assert captured.err == ""
@@ -119,7 +119,7 @@ def test_brief_prints_only_the_verdict(monkeypatch, capsys, tmp_path):
 def test_brief_says_passed(monkeypatch, capsys, tmp_path):
     setup(monkeypatch, tmp_path, project(web={}), FakeImages(users={"web:1": "app"}))
     assert commands.audit([], ["--brief"], runtime()) == 0
-    assert capsys.readouterr().out == "\u2714 passed\n"
+    assert capsys.readouterr().out == "\u2714 audit passed\n"
 
 
 def test_audit_takes_only_brief(capsys):

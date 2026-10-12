@@ -61,8 +61,8 @@ def test_marks_are_coloured_on_a_terminal(monkeypatch, mark, painted):
 def test_no_colour_when_piped_or_asked_not_to(monkeypatch, capsys):
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setenv("TERM", "xterm")
-    messages.notice("✔ screening passed")
-    assert capsys.readouterr().err == "[dockscreen] ✔ screening passed\n"  # not a terminal
+    messages.notice("✔ audit passed")
+    assert capsys.readouterr().err == "[dockscreen] ✔ audit passed\n"  # not a terminal
 
     monkeypatch.setenv("NO_COLOR", "1")
     assert messages.paint("✔ x", Terminal()) == "✔ x"

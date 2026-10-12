@@ -31,21 +31,25 @@ def dot(assessment):
     return GOOD if assessment.kind in (Kind.OK, Kind.CONFIGURED) else WARN
 
 
-def line(verdict, what="audit"):
-    """The closing line of an audit or a screening: icon and verdict."""
-    return messages.marked(ICONS[verdict], f"{what} {verdict.name.lower()}")
+# The closing line, the same for an audit, for --brief and for the check before a command runs.
+LINES = {Verdict.PASSED: "audit passed", Verdict.REFUSED: "denied by audit", Verdict.FAILED: "audit failed"}
+
+
+def line(verdict):
+    """The closing line of an audit, or of the check before a command runs: mark and verdict."""
+    return messages.marked(ICONS[verdict], LINES[verdict])
 
 
 def brief(verdict, reasons):
-    """The verdict in one line, for --brief: `✔ passed`, or the verdict and its first reason."""
+    """The verdict in one line, for --brief: the closing line, with the first reason if it did not pass."""
     if verdict is Verdict.PASSED:
-        return messages.marked(ICONS[verdict], "passed")
+        return line(verdict)
     first = printable(reasons[0]) if reasons else "no reason given"
     more = f" (+{len(reasons) - 1} more)" if len(reasons) > 1 else ""
-    return messages.marked(ICONS[verdict], f"{verdict.name.lower()}: {first}{more}")
+    return messages.marked(ICONS[verdict], f"{LINES[verdict]}: {first}{more}")
 
 
-def report(verdict, reasons, brief_mode=False, what="audit"):
+def report(verdict, reasons, brief_mode=False):
     """Print the verdict: one line on stdout with brief_mode, else each reason and the closing line on
     stderr. Returns the exit status."""
     if brief_mode:
@@ -53,7 +57,7 @@ def report(verdict, reasons, brief_mode=False, what="audit"):
         return int(verdict)
     for reason in reasons:
         messages.notice(messages.marked(BAD, f"refusing: {reason}" if verdict is Verdict.REFUSED else reason))
-    messages.notice(line(verdict, what))
+    messages.notice(line(verdict))
     return int(verdict)
 
 
@@ -63,5 +67,5 @@ def screened(reasons, failed=False):
     reasons: why it may not; failed: the reasons are failures to look, not refusals.
     """
     outcome = Verdict.FAILED if failed else Verdict.REFUSED if reasons else Verdict.PASSED
-    report(outcome, reasons, what="screening")
+    report(outcome, reasons)
     return outcome is Verdict.PASSED

@@ -96,8 +96,7 @@ def gated(argv, sub, idx, end, runtime, allow_me=False, strict=False):
 
     docker = runtime.docker
     if screen.is_remote(argv[:idx], runtime.env, docker):
-        what = "audit" if sub == "audit" else "screening"
-        return verdict.report(Verdict.REFUSED, [screen.REMOTE_MESSAGE], what=what)
+        return verdict.report(Verdict.REFUSED, [screen.REMOTE_MESSAGE])
 
     ctx = imagedecision.Context(docker, runtime.rules(allow_me), runtime)
     if sub == "run":

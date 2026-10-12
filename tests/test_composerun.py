@@ -147,7 +147,7 @@ def test_no_defaults_notice_when_nothing_was_added(monkeypatch, tmp_path, capsys
     inspect_as(monkeypatch, tmp_path, hardened)
     tools, _ = make_tools(FakeImages(users={"x:1": "app"}))
     up(["up"], 0, tools)
-    assert capsys.readouterr().err == "[dockscreen] \u2714 screening passed\n"  # and nothing else
+    assert capsys.readouterr().err == "[dockscreen] \u2714 audit passed\n"  # and nothing else
 
 
 def test_the_verdict_is_the_last_word_before_compose_runs(monkeypatch, tmp_path, capsys):
@@ -156,7 +156,7 @@ def test_the_verdict_is_the_last_word_before_compose_runs(monkeypatch, tmp_path,
     tools, _ = make_tools(FakeImages(users={"x:1": "app"}),
                           on_child=lambda cmd: seen.append(capsys.readouterr().err) if "up" in cmd else None)
     up(["up"], 0, tools)
-    assert seen[-1].splitlines()[-1] == "[dockscreen] \u2714 screening passed"
+    assert seen[-1].splitlines()[-1] == "[dockscreen] \u2714 audit passed"
 
 
 def test_a_refused_run_ends_with_the_verdict(monkeypatch, tmp_path, capsys):
@@ -164,7 +164,7 @@ def test_a_refused_run_ends_with_the_verdict(monkeypatch, tmp_path, capsys):
     assert up(["up"], 0, make_tools()[0]) == 1
     assert capsys.readouterr().err.splitlines()[-2:] == [
         "[dockscreen] \u25cf refusing: service web: privileged is not allowed",
-        "[dockscreen] \u2718 screening refused"]
+        "[dockscreen] \u2296 denied by audit"]
 
 
 # --- services that set no user ---------------------------------------------------

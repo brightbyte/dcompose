@@ -129,7 +129,7 @@ def test_a_user_on_the_command_line_is_all_a_mounting_container_needs(capsys):
     docker = FakeDocker(image_user="pg", container_user="998:998", info_extra=BIND)
     assert gate.run(ctx(docker), ["--user", "998:998", "-v", "/p:/p", "img"]) == 42
     assert docker.names().count("create") == 1
-    assert capsys.readouterr().err == "[dockscreen] \u2714 screening passed\n"  # nothing but the verdict
+    assert capsys.readouterr().err == "[dockscreen] \u2714 audit passed\n"  # nothing but the verdict
 
 
 def test_root_with_mounts_runs_as_the_default_user(capsys):
@@ -163,7 +163,7 @@ def test_a_configured_image_user_replaces_the_images_own(capsys):
     assert gate.run(ctx(docker, IMG_USERS), ["img"]) == 42
 
     assert docker.calls[3][1][:3] == [*DEFAULTS, "--user=999:999"]  # root included, mounts or not
-    assert capsys.readouterr().err == "[dockscreen] \u2714 screening passed\n"  # configured: no notice
+    assert capsys.readouterr().err == "[dockscreen] \u2714 audit passed\n"  # configured: no notice
 
 
 def test_a_configured_user_needs_the_image_to_have_been_pulled_from_that_repository(capsys):
@@ -561,20 +561,20 @@ def test_audit_of_an_image_docker_cannot_create_fails(capsys):
     docker = FakeDocker(create_code=125)
     assert audit(docker, "img") == 3
     assert capsys.readouterr().err == (f"[dockscreen] {BAD} docker could not create a container for img\n"
-                                       "[dockscreen] \u26a0 audit failed\n")
+                                       "[dockscreen] \u2718 audit failed\n")
 
 
 def test_audit_without_docker_fails(capsys):
     docker = FakeDocker()
     docker.create = lambda args: (_ for _ in ()).throw(DockerNotFound("'docker' not found in PATH"))
     assert audit(docker, "--brief", "img") == 3
-    assert capsys.readouterr().out == "\u26a0 failed: 'docker' not found in PATH\n"
+    assert capsys.readouterr().out == "\u2718 audit failed: 'docker' not found in PATH\n"
 
 
 @pytest.mark.parametrize("args, out, code", [
-    (["--brief", "img"], "\u2714 passed\n", 0),
+    (["--brief", "img"], "\u2714 audit passed\n", 0),
     (["-v", "/p:/p", "--brief", "img"],
-     "\u2718 refused: the image's uid 100000 is not in the nobody range 65530-65534, "
+     "\u2296 denied by audit: the image's uid 100000 is not in the nobody range 65530-65534, "
      "and there are host mounts; pass --user UID:GID, --as NAME or --as-me to choose a user, or, for an "
      f'image pulled from a registry, set user under [images."img"] in {runtime().config_file} '
      "(+1 more)\n", 1),
@@ -590,7 +590,7 @@ def test_brief_prints_only_the_verdict(args, out, code, capsys):
 def test_brief_with_strict_screen_names_the_command_line_finding(capsys):
     docker = FakeDocker(image_user="nobody", info_extra={"HostConfig": {"Privileged": True}})
     assert gate.audit(ctx(docker), ["--brief", "img"], strict=True) == 1
-    assert capsys.readouterr().out == "\u2718 refused: privileged is not allowed\n"
+    assert capsys.readouterr().out == "\u2296 denied by audit: privileged is not allowed\n"
 
 
 @pytest.mark.parametrize("args", [[], ["--rm"], ["--name"]])
@@ -612,7 +612,7 @@ def test_run_refuses_what_audit_calls_failed(capsys):
     docker.inspect_container = lambda ref: (_ for _ in ()).throw(DockerError("boom"))
     assert gate.run(ctx(docker), ["img"]) == 1  # not started: a failure to look is not a pass
     assert capsys.readouterr().err.splitlines() == [
-        f"[dockscreen] {BAD} boom", "[dockscreen] \u26a0 screening failed"]
+        f"[dockscreen] {BAD} boom", "[dockscreen] \u2718 audit failed"]
 
 
 # --- docker audit routing ---------------------------------------------------
@@ -786,7 +786,7 @@ def test_audit_does_not_point_out_a_user_the_config_file_sets_for_the_image(caps
 def test_start_ends_with_the_verdict_before_docker_runs(routed, capsys):
     assert docker_cli.main(["start", "c1"]) == 0
     assert routed == [("exec", ["start", "c1"])]
-    assert capsys.readouterr().err == "[dockscreen] \u2714 screening passed\n"
+    assert capsys.readouterr().err == "[dockscreen] \u2714 audit passed\n"
 
 
 def test_commands_that_are_not_screened_say_nothing(routed, capsys):
